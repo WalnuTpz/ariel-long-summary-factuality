@@ -6,6 +6,8 @@ Current batch:
 
 - `utils.py`: dependency-free JSONL, text, and normalization helpers.
 - `load_data.py`: normalize raw JSONL data into the project document schema.
+- `chunking.py`: split normalized documents into paragraph or token-window chunks.
+- `retrieval_bm25.py`: run dependency-free BM25 retrieval over document chunks.
 
-Later batches will add chunking, retrieval, LLM calls, verification,
-correction, and evaluation modules.
+Later batches will add embedding retrieval, hybrid retrieval, LLM calls,
+verification, correction, and evaluation modules.

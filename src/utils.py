@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 
+TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
+
+
 def ensure_parent_dir(path: str | Path) -> Path:
     """Create the parent directory for a file path and return the path."""
     path = Path(path)
@@ -96,3 +99,8 @@ def first_present(item: dict[str, Any], keys: Iterable[str]) -> Any:
 
 def safe_str(value: Any) -> str:
     return stringify_text(value)
+
+
+def simple_tokenize(text: Any) -> list[str]:
+    """Tokenize text for lightweight lexical matching."""
+    return TOKEN_PATTERN.findall(stringify_text(text).lower())
