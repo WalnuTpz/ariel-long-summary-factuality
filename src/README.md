@@ -13,5 +13,5 @@ Current batch:
 - `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
   normalized scores.
 
-Later batches will add LLM calls, verification, correction, and evaluation
-modules.
+Later batches will add LLM calls, NLI/LLM verification, correction, and
+evaluation modules.

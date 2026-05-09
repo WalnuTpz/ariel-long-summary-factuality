@@ -6,7 +6,6 @@ PYTHON_BIN="${PYTHON:-python3}"
 required_dirs=(
   "data/raw"
   "data/processed"
-  "data/annotations"
   "data/results"
   "prompts"
   "src"
