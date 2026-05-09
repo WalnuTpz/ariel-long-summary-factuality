@@ -81,12 +81,16 @@ def normalize_record(
     title = normalize_whitespace(first_present(item, TITLE_KEYS))
     reference_summary = normalize_whitespace(first_present(item, SUMMARY_KEYS))
 
-    used_keys = set(DOC_ID_KEYS + TITLE_KEYS + DOCUMENT_KEYS + SUMMARY_KEYS)
-    meta = {
-        key: value
-        for key, value in item.items()
-        if key not in used_keys and value not in (None, "")
-    }
+    source_meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    used_keys = set(DOC_ID_KEYS + TITLE_KEYS + DOCUMENT_KEYS + SUMMARY_KEYS + ("meta",))
+    meta = dict(source_meta)
+    meta.update(
+        {
+            key: value
+            for key, value in item.items()
+            if key not in used_keys and value not in (None, "")
+        }
+    )
     meta["source_index"] = index
 
     return (
