@@ -1,1 +1,1 @@
-# Dependencies will be added after implementation details are finalized.
+sentence-transformers

@@ -23,6 +23,7 @@ done
 documents_path="/tmp/long_summary_factuality_debug_documents.jsonl"
 chunks_path="/tmp/long_summary_factuality_debug_chunks.jsonl"
 retrieval_path="/tmp/long_summary_factuality_debug_bm25.jsonl"
+embedding_path="/tmp/long_summary_factuality_debug_embedding.jsonl"
 
 "${PYTHON_BIN}" -m src.load_data \
   --input examples/debug_documents.jsonl \
@@ -41,7 +42,14 @@ retrieval_path="/tmp/long_summary_factuality_debug_bm25.jsonl"
   --output "${retrieval_path}" \
   --top-k 2
 
+"${PYTHON_BIN}" -m src.retrieval_embedding \
+  --chunks "${chunks_path}" \
+  --queries examples/debug_facts.jsonl \
+  --output "${embedding_path}" \
+  --top-k 2
+
 test -s "${documents_path}"
 test -s "${chunks_path}"
 test -s "${retrieval_path}"
-echo "project skeleton, data loading, chunking, and BM25 retrieval ok"
+test -s "${embedding_path}"
+echo "project skeleton, data loading, chunking, BM25, and embedding retrieval ok"
