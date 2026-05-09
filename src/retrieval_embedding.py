@@ -69,7 +69,12 @@ class EmbeddingIndex:
 class SentenceTransformerEmbedder:
     backend_name = "sentence-transformers"
 
-    def __init__(self, model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL):
+    def __init__(
+        self,
+        model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+        device: str = "cpu",
+        local_files_only: bool = False,
+    ):
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -78,7 +83,13 @@ class SentenceTransformerEmbedder:
                 "`pip install -r requirements.txt`."
             ) from exc
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        self.device = device
+        self.local_files_only = local_files_only
+        self.model = SentenceTransformer(
+            model_name,
+            device=device,
+            local_files_only=local_files_only,
+        )
 
     def encode(self, texts: list[str]) -> list[list[float]]:
         vectors = self.model.encode(texts, normalize_embeddings=True)
@@ -99,8 +110,14 @@ def to_float_list(vector: Any) -> list[float]:
 
 def build_embedder(
     model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    device: str = "cpu",
+    local_files_only: bool = False,
 ) -> Embedder:
-    return SentenceTransformerEmbedder(model_name=model_name)
+    return SentenceTransformerEmbedder(
+        model_name=model_name,
+        device=device,
+        local_files_only=local_files_only,
+    )
 
 
 def build_embedding_indices(
@@ -119,8 +136,14 @@ def retrieve_embedding(
     queries: Iterable[dict[str, Any]],
     top_k: int = 3,
     model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    device: str = "cpu",
+    local_files_only: bool = False,
 ) -> tuple[list[dict[str, Any]], RetrievalStats]:
-    embedder = build_embedder(model_name=model_name)
+    embedder = build_embedder(
+        model_name=model_name,
+        device=device,
+        local_files_only=local_files_only,
+    )
     chunks_by_doc = group_chunks_by_doc(chunks)
     indices = build_embedding_indices(chunks_by_doc, embedder=embedder)
 
@@ -157,12 +180,16 @@ def retrieve_embedding_jsonl(
     output_path: str | Path,
     top_k: int = 3,
     model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL,
+    device: str = "cpu",
+    local_files_only: bool = False,
 ) -> RetrievalStats:
     results, stats = retrieve_embedding(
         chunks=iter_jsonl(chunks_path),
         queries=iter_jsonl(queries_path),
         top_k=top_k,
         model_name=model_name,
+        device=device,
+        local_files_only=local_files_only,
     )
     write_jsonl(results, output_path)
     return stats
@@ -183,6 +210,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_SENTENCE_TRANSFORMER_MODEL,
         help="SentenceTransformer model name.",
     )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Torch device for sentence-transformers, e.g. cpu or cuda.",
+    )
+    parser.add_argument(
+        "--local-files-only",
+        action="store_true",
+        help="Load the embedding model from local Hugging Face cache only.",
+    )
     return parser
 
 
@@ -194,6 +231,8 @@ def main() -> None:
         output_path=args.output,
         top_k=args.top_k,
         model_name=args.model_name,
+        device=args.device,
+        local_files_only=args.local_files_only,
     )
     for key, value in stats.to_dict().items():
         print(f"{key}: {value}")

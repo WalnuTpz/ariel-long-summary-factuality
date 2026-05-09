@@ -10,6 +10,8 @@ Current batch:
 - `retrieval_bm25.py`: run dependency-free BM25 retrieval over document chunks.
 - `retrieval_embedding.py`: run sentence-transformers embedding retrieval over
   document chunks.
+- `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
+  normalized scores.
 
-Later batches will add hybrid retrieval, LLM calls, verification, correction,
-and evaluation modules.
+Later batches will add LLM calls, verification, correction, and evaluation
+modules.
