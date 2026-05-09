@@ -12,6 +12,8 @@ Current batch:
   document chunks.
 - `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
   normalized scores.
+- `decompose_facts.py`: decompose clean and perturbed summaries into atomic
+  facts with OpenAI structured outputs.
 
-Later batches will add LLM calls, NLI/LLM verification, correction, and
-evaluation modules.
+Later batches will add NLI/LLM verification, correction, and evaluation
+modules.
