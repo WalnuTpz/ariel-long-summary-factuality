@@ -1,11 +1,11 @@
 # Source Code
 
-This directory is reserved for project implementation.
+This directory contains the project implementation.
 
-At the repository initialization stage, concrete Python modules are intentionally
-not included. Add implementation files only after the team finalizes:
+Current batch:
 
-- dataset choice and input format;
-- API provider and model access method;
-- pipeline stage boundaries;
-- experiment scale and evaluation protocol.
+- `utils.py`: dependency-free JSONL, text, and normalization helpers.
+- `load_data.py`: normalize raw JSONL data into the project document schema.
+
+Later batches will add chunking, retrieval, LLM calls, verification,
+correction, and evaluation modules.
