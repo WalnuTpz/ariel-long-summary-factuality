@@ -15,6 +15,8 @@ Current batch:
 - `retrieval_rael.py`: risk-aware adaptive evidence localization with
   sentence risk classification, dynamic BM25/embedding fusion, and coverage
   reranking plus adaptive adjacent-context expansion.
+- `summarize.py`: generate long-document summaries with a local HuggingFace
+  causal language model using section summaries plus final summary merging.
 - `split_summary_sentences.py`: split generated summaries into sentence-level
   query records for retrieval and NLI.
 - `verification_schema.py`: prepare unified verification inputs and result
@@ -26,7 +28,6 @@ Current batch:
 
 Planned modules:
 
-- `summarize.py`: generate long-document summaries.
 - `correct_local.py`: perform evidence-constrained local correction.
 - `evaluate_summary.py`: compute ROUGE and factuality metrics.
 - `export_cases.py`: export success/failure cases for the report.
