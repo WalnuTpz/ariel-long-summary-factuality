@@ -19,6 +19,12 @@ from src.verification_schema import (
 
 DEFAULT_NLI_MODEL = "facebook/bart-large-mnli"
 DEFAULT_LABEL_ORDER = ("contradiction", "neutral", "entailment")
+AGGREGATION_CONCAT = "concat"
+AGGREGATION_PER_CHUNK = "per_chunk"
+AGGREGATION_METHODS = (AGGREGATION_CONCAT, AGGREGATION_PER_CHUNK)
+DEFAULT_AGGREGATION = AGGREGATION_PER_CHUNK
+DEFAULT_ENTAILMENT_THRESHOLD = 0.5
+DEFAULT_CONTRADICTION_THRESHOLD = 0.5
 NLI_TO_PROJECT_LABEL = {
     "entailment": SUPPORTED,
     "contradiction": UNSUPPORTED,
@@ -148,10 +154,242 @@ def make_reason(raw_label: str, scores: dict[str, float]) -> str:
     return f"NLI predicted {raw_label} with score {score:.3f}."
 
 
+def make_concat_result(
+    item: dict[str, Any],
+    verifier: NliVerifier,
+    prediction: dict[str, Any],
+) -> dict[str, Any]:
+    result = build_verification_result(
+        verification_input=item,
+        label=prediction["label"],
+        reason=make_reason(prediction["raw_label"], prediction["scores"]),
+        model=verifier.model_name,
+        scores=prediction["scores"],
+        raw_label=prediction["raw_label"],
+    )
+    result["aggregation"] = AGGREGATION_CONCAT
+    return result
+
+
+def evidence_items_for_prediction(item: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence_items = item.get("evidence_items")
+    if isinstance(evidence_items, list) and evidence_items:
+        return [
+            evidence_item
+            for evidence_item in evidence_items
+            if str(evidence_item.get("text") or "").strip()
+        ]
+
+    evidence_texts = item.get("evidence") or []
+    evidence_ids = item.get("evidence_ids") or []
+    fallback_items: list[dict[str, Any]] = []
+    for index, text in enumerate(evidence_texts, start=1):
+        text = str(text or "").strip()
+        if not text:
+            continue
+        chunk_id = ""
+        if index - 1 < len(evidence_ids):
+            chunk_id = str(evidence_ids[index - 1] or "").strip()
+        fallback_items.append(
+            {
+                "chunk_id": chunk_id,
+                "chunk_index": None,
+                "rank": index,
+                "score": None,
+                "text": text,
+            }
+        )
+    return fallback_items
+
+
+def make_chunk_prediction(
+    evidence_item: dict[str, Any],
+    prediction: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "chunk_id": evidence_item.get("chunk_id", ""),
+        "chunk_index": evidence_item.get("chunk_index"),
+        "rank": evidence_item.get("rank"),
+        "retrieval_score": evidence_item.get("score"),
+        "label": prediction["label"],
+        "raw_label": prediction["raw_label"],
+        "scores": prediction["scores"],
+    }
+
+
+def max_scores(chunk_predictions: list[dict[str, Any]]) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    for prediction in chunk_predictions:
+        for label, score in prediction.get("scores", {}).items():
+            scores[label] = max(scores.get(label, 0.0), float(score))
+    return {label: round(score, 6) for label, score in scores.items()}
+
+
+def label_score(prediction: dict[str, Any], label: str) -> float:
+    return float(prediction.get("scores", {}).get(label, 0.0))
+
+
+def choose_chunk_prediction(
+    chunk_predictions: list[dict[str, Any]],
+    label: str,
+    threshold: float,
+) -> dict[str, Any] | None:
+    candidates = [
+        prediction
+        for prediction in chunk_predictions
+        if prediction.get("raw_label") == label
+        and label_score(prediction, label) >= threshold
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda prediction: label_score(prediction, label))
+
+
+def make_per_chunk_reason(
+    selected_prediction: dict[str, Any] | None,
+    final_label: str,
+    entailment_threshold: float,
+    contradiction_threshold: float,
+) -> str:
+    if selected_prediction:
+        raw_label = str(selected_prediction.get("raw_label") or "")
+        score = label_score(selected_prediction, raw_label)
+        chunk_id = selected_prediction.get("chunk_id") or "unknown chunk"
+        return (
+            f"Per-chunk NLI selected {raw_label} from {chunk_id} "
+            f"with score {score:.3f}."
+        )
+    return (
+        "Per-chunk NLI found no evidence chunk above thresholds "
+        f"(entailment >= {entailment_threshold:.2f}, "
+        f"contradiction >= {contradiction_threshold:.2f}); "
+        f"assigned {final_label}."
+    )
+
+
+def aggregate_chunk_predictions(
+    chunk_predictions: list[dict[str, Any]],
+    entailment_threshold: float,
+    contradiction_threshold: float,
+) -> tuple[str, str, dict[str, float], str, dict[str, Any] | None]:
+    selected_entailment = choose_chunk_prediction(
+        chunk_predictions,
+        label="entailment",
+        threshold=entailment_threshold,
+    )
+    if selected_entailment:
+        return (
+            SUPPORTED,
+            "entailment",
+            selected_entailment["scores"],
+            make_per_chunk_reason(
+                selected_entailment,
+                final_label=SUPPORTED,
+                entailment_threshold=entailment_threshold,
+                contradiction_threshold=contradiction_threshold,
+            ),
+            selected_entailment,
+        )
+
+    selected_contradiction = choose_chunk_prediction(
+        chunk_predictions,
+        label="contradiction",
+        threshold=contradiction_threshold,
+    )
+    if selected_contradiction:
+        return (
+            UNSUPPORTED,
+            "contradiction",
+            selected_contradiction["scores"],
+            make_per_chunk_reason(
+                selected_contradiction,
+                final_label=UNSUPPORTED,
+                entailment_threshold=entailment_threshold,
+                contradiction_threshold=contradiction_threshold,
+            ),
+            selected_contradiction,
+        )
+
+    scores = max_scores(chunk_predictions)
+    raw_label = max(scores, key=scores.get) if scores else "neutral"
+    return (
+        NOT_ENOUGH_INFO,
+        raw_label,
+        scores,
+        make_per_chunk_reason(
+            selected_prediction=None,
+            final_label=NOT_ENOUGH_INFO,
+            entailment_threshold=entailment_threshold,
+            contradiction_threshold=contradiction_threshold,
+        ),
+        None,
+    )
+
+
+def make_per_chunk_result(
+    item: dict[str, Any],
+    verifier: NliVerifier,
+    hypothesis: str,
+    entailment_threshold: float,
+    contradiction_threshold: float,
+) -> tuple[dict[str, Any], bool]:
+    chunk_predictions: list[dict[str, Any]] = []
+    had_empty_output = False
+    for evidence_item in evidence_items_for_prediction(item):
+        prediction = verifier.predict(
+            premise=str(evidence_item.get("text") or ""),
+            hypothesis=hypothesis,
+        )
+        if not prediction["raw_label"]:
+            had_empty_output = True
+        chunk_predictions.append(make_chunk_prediction(evidence_item, prediction))
+
+    label, raw_label, scores, reason, selected_prediction = aggregate_chunk_predictions(
+        chunk_predictions=chunk_predictions,
+        entailment_threshold=entailment_threshold,
+        contradiction_threshold=contradiction_threshold,
+    )
+    result = build_verification_result(
+        verification_input=item,
+        label=label,
+        reason=reason,
+        model=verifier.model_name,
+        scores=scores,
+        raw_label=raw_label,
+    )
+    result["aggregation"] = AGGREGATION_PER_CHUNK
+    result["chunk_predictions"] = chunk_predictions
+    result["selected_evidence_id"] = (
+        selected_prediction.get("chunk_id", "") if selected_prediction else ""
+    )
+    result["entailment_threshold"] = entailment_threshold
+    result["contradiction_threshold"] = contradiction_threshold
+    return result, had_empty_output
+
+
+def make_no_evidence_result(item: dict[str, Any], verifier: NliVerifier) -> dict[str, Any]:
+    result = build_verification_result(
+        verification_input=item,
+        label=NOT_ENOUGH_INFO,
+        reason="No retrieved evidence was available for this sentence.",
+        model=verifier.model_name,
+        scores={},
+        raw_label="",
+    )
+    result["aggregation"] = ""
+    return result
+
+
 def verify_inputs(
     inputs: Iterable[dict[str, Any]],
     verifier: NliVerifier,
+    aggregation: str = DEFAULT_AGGREGATION,
+    entailment_threshold: float = DEFAULT_ENTAILMENT_THRESHOLD,
+    contradiction_threshold: float = DEFAULT_CONTRADICTION_THRESHOLD,
 ) -> tuple[list[dict[str, Any]], NliStats]:
+    if aggregation not in AGGREGATION_METHODS:
+        raise ValueError(f"Unsupported aggregation method: {aggregation}")
+
     stats = NliStats()
     output: list[dict[str, Any]] = []
 
@@ -162,35 +400,29 @@ def verify_inputs(
         if not premise:
             stats.records_without_premise += 1
             if hypothesis:
-                output.append(
-                    build_verification_result(
-                        verification_input=item,
-                        label=NOT_ENOUGH_INFO,
-                        reason="No retrieved evidence was available for this sentence.",
-                        model=verifier.model_name,
-                        scores={},
-                        raw_label="",
-                    )
-                )
+                output.append(make_no_evidence_result(item, verifier=verifier))
                 stats.written_results += 1
                 continue
         if not hypothesis:
             stats.records_without_hypothesis += 1
             continue
 
-        prediction = verifier.predict(premise=premise, hypothesis=hypothesis)
-        if not prediction["raw_label"]:
-            stats.truncated_or_empty_outputs += 1
-        output.append(
-            build_verification_result(
-                verification_input=item,
-                label=prediction["label"],
-                reason=make_reason(prediction["raw_label"], prediction["scores"]),
-                model=verifier.model_name,
-                scores=prediction["scores"],
-                raw_label=prediction["raw_label"],
+        if aggregation == AGGREGATION_CONCAT:
+            prediction = verifier.predict(premise=premise, hypothesis=hypothesis)
+            if not prediction["raw_label"]:
+                stats.truncated_or_empty_outputs += 1
+            output.append(make_concat_result(item, verifier=verifier, prediction=prediction))
+        else:
+            result, had_empty_output = make_per_chunk_result(
+                item=item,
+                verifier=verifier,
+                hypothesis=hypothesis,
+                entailment_threshold=entailment_threshold,
+                contradiction_threshold=contradiction_threshold,
             )
-        )
+            if had_empty_output:
+                stats.truncated_or_empty_outputs += 1
+            output.append(result)
         stats.written_results += 1
 
     return output, stats
@@ -210,6 +442,9 @@ def verify_nli_jsonl(
     retrieval_method: str | None = None,
     top_k: int = 3,
     limit: int | None = None,
+    aggregation: str = DEFAULT_AGGREGATION,
+    entailment_threshold: float = DEFAULT_ENTAILMENT_THRESHOLD,
+    contradiction_threshold: float = DEFAULT_CONTRADICTION_THRESHOLD,
 ) -> NliStats:
     if inputs_path is None and (sentences_path is None or retrieval_path is None):
         raise ValueError("Provide either --inputs or both --sentences and --retrieval.")
@@ -238,7 +473,13 @@ def verify_nli_jsonl(
         local_files_only=local_files_only,
         label_order=label_order,
     )
-    results, stats = verify_inputs(inputs, verifier=verifier)
+    results, stats = verify_inputs(
+        inputs,
+        verifier=verifier,
+        aggregation=aggregation,
+        entailment_threshold=entailment_threshold,
+        contradiction_threshold=contradiction_threshold,
+    )
     write_jsonl(results, output_path)
     return stats
 
@@ -280,6 +521,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu", help="Torch device, e.g. cpu or cuda.")
     parser.add_argument("--max-length", type=int, default=1024, help="NLI max tokens.")
     parser.add_argument("--top-k", type=int, default=3, help="Evidence chunks to use.")
+    parser.add_argument(
+        "--aggregation",
+        choices=AGGREGATION_METHODS,
+        default=DEFAULT_AGGREGATION,
+        help=(
+            "Evidence aggregation strategy. concat runs one NLI call over joined "
+            "evidence; per_chunk runs NLI on each evidence chunk and aggregates labels."
+        ),
+    )
+    parser.add_argument(
+        "--entailment-threshold",
+        type=float,
+        default=DEFAULT_ENTAILMENT_THRESHOLD,
+        help="Minimum per-chunk entailment score required for Supported.",
+    )
+    parser.add_argument(
+        "--contradiction-threshold",
+        type=float,
+        default=DEFAULT_CONTRADICTION_THRESHOLD,
+        help="Minimum per-chunk contradiction score required for Unsupported.",
+    )
     parser.add_argument("--method", default="Hybrid + NLI", help="Experiment method name.")
     parser.add_argument(
         "--retrieval-method",
@@ -317,6 +579,9 @@ def main() -> None:
         retrieval_method=args.retrieval_method,
         top_k=args.top_k,
         limit=args.limit,
+        aggregation=args.aggregation,
+        entailment_threshold=args.entailment_threshold,
+        contradiction_threshold=args.contradiction_threshold,
     )
     for key, value in stats.to_dict().items():
         print(f"{key}: {value}")

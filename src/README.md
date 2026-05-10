@@ -17,8 +17,9 @@ Current batch:
 - `verification_schema.py`: prepare unified verification inputs and result
   records from summary sentence queries.
 - `verify_nli.py`: run sentence-level NLI verification with retrieved
-  evidence. The final experiment should use a course-recommended NLI model
-  such as `facebook/bart-large-mnli`.
+  evidence. It supports concatenated evidence and per-chunk aggregation; the
+  final experiment should use a course-recommended NLI model such as
+  `facebook/bart-large-mnli`.
 
 Planned modules:
 
