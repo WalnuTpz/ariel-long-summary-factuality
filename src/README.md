@@ -31,7 +31,7 @@ Current batch:
 - `evaluate_summary.py`: compute dependency-free ROUGE-1/2/L, sentence-level
   factuality ratios, length ratios, error reduction, and length-bucket
   aggregate statistics.
+- `export_cases.py`: export representative success/failure factuality and
+  correction cases as JSONL and Markdown for the report and slides.
 
 Planned modules:
-
-- `export_cases.py`: export success/failure cases for the report.
