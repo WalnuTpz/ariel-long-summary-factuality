@@ -28,8 +28,10 @@ Current batch:
 - `correct_local.py`: perform evidence-constrained local correction for
   Unsupported and Not Enough Information summary sentences, then reconstruct
   the corrected summary.
+- `evaluate_summary.py`: compute dependency-free ROUGE-1/2/L, sentence-level
+  factuality ratios, length ratios, error reduction, and length-bucket
+  aggregate statistics.
 
 Planned modules:
 
-- `evaluate_summary.py`: compute ROUGE and factuality metrics.
 - `export_cases.py`: export success/failure cases for the report.
