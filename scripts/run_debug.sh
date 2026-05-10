@@ -7,11 +7,8 @@ required_dirs=(
   "data/raw"
   "data/processed"
   "data/results"
-  "prompts"
   "src"
   "scripts"
-  "outputs/tables"
-  "outputs/figures"
   "report"
 )
 
