@@ -162,7 +162,7 @@ def retrieve_embedding(
         top_chunks = indices[doc_id].retrieve(query_text, top_k=top_k)
         output.append(
             {
-                "fact_id": query_id,
+                "query_id": query_id,
                 "doc_id": doc_id,
                 "query": query_text,
                 "retrieval_method": "embedding",
@@ -201,7 +201,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--queries",
         required=True,
-        help="Query/fact JSONL input path. Requires doc_id and fact/query text.",
+        help="Query JSONL input path. Requires query_id, doc_id, and text/query.",
     )
     parser.add_argument("--output", required=True, help="Retrieval JSONL output path.")
     parser.add_argument("--top-k", type=int, default=3, help="Number of chunks to keep.")

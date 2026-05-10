@@ -32,12 +32,12 @@ def minmax_normalize(scores: dict[str, float]) -> dict[str, float]:
     return {key: (value - minimum) / (maximum - minimum) for key, value in scores.items()}
 
 
-def index_by_fact_id(records: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def index_by_query_id(records: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for record in records:
-        fact_id = str(record.get("fact_id") or "").strip()
-        if fact_id:
-            indexed[fact_id] = record
+        query_id = str(record.get("query_id") or "").strip()
+        if query_id:
+            indexed[query_id] = record
     return indexed
 
 
@@ -113,7 +113,7 @@ def fuse_one_result(
         top_chunks.append(item)
 
     return {
-        "fact_id": bm25_record["fact_id"],
+        "query_id": bm25_record["query_id"],
         "doc_id": bm25_record.get("doc_id"),
         "query": bm25_record.get("query", embedding_record.get("query", "")),
         "retrieval_method": "hybrid",
@@ -133,7 +133,7 @@ def retrieve_hybrid(
 
     bm25_records = list(bm25_results)
     embedding_records = list(embedding_results)
-    embedding_by_fact_id = index_by_fact_id(embedding_records)
+    embedding_by_query_id = index_by_query_id(embedding_records)
 
     stats = HybridStats(
         input_bm25_results=len(bm25_records),
@@ -142,8 +142,8 @@ def retrieve_hybrid(
     output: list[dict[str, Any]] = []
 
     for bm25_record in bm25_records:
-        fact_id = str(bm25_record.get("fact_id") or "").strip()
-        embedding_record = embedding_by_fact_id.get(fact_id)
+        query_id = str(bm25_record.get("query_id") or "").strip()
+        embedding_record = embedding_by_query_id.get(query_id)
         if embedding_record is None:
             stats.missing_embedding_results += 1
             continue

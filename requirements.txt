@@ -2,4 +2,3 @@ sentence-transformers
 transformers
 torch
 datasets
-openai
