@@ -13,7 +13,8 @@ Current batch:
 - `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
   normalized scores.
 - `retrieval_rael.py`: risk-aware adaptive evidence localization with
-  sentence risk classification and dynamic BM25/embedding fusion.
+  sentence risk classification, dynamic BM25/embedding fusion, and coverage
+  reranking plus adaptive adjacent-context expansion.
 - `split_summary_sentences.py`: split generated summaries into sentence-level
   query records for retrieval and NLI.
 - `verification_schema.py`: prepare unified verification inputs and result
@@ -26,7 +27,6 @@ Current batch:
 Planned modules:
 
 - `summarize.py`: generate long-document summaries.
-- RAEL extensions: coverage reranking and adaptive evidence expansion.
 - `correct_local.py`: perform evidence-constrained local correction.
 - `evaluate_summary.py`: compute ROUGE and factuality metrics.
 - `export_cases.py`: export success/failure cases for the report.
