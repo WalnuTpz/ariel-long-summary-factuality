@@ -38,6 +38,12 @@ ACTION_REPLACE = "replace"
 ACTION_REMOVE = "remove"
 ACTION_KEEP = "keep"
 ACTION_ERROR = "error"
+FORMAT_ARTIFACT_PATTERN = re.compile(
+    r"\b(?:action|corrected\s+sentence|reason|original\s+sentence|evidence)\s*:",
+    flags=re.I,
+)
+RELATIVE_LENGTH_BUFFER_WORDS = 8
+RELATIVE_LENGTH_MULTIPLIER = 1.8
 
 
 @dataclass
@@ -226,11 +232,14 @@ def correction_prompt(
         '"corrected_sentence": "...", '
         '"reason": "..."'
         "}\n\n"
+        "Output exactly one JSON object. Do not include markdown, labels, "
+        "explanations, or any text outside the JSON object. "
         "Use action=replace when the sentence can be made factual from the "
         "evidence. Use action=remove when the sentence is unsupported or cannot "
         "be repaired without inventing information. Use action=keep only if the "
-        "original sentence is already fully supported. If replacing, keep the "
-        f"corrected sentence under {max_sentence_words} words."
+        "original sentence is already fully supported. For action=keep, leave "
+        '"corrected_sentence" empty. If replacing, keep the corrected sentence '
+        f"under {max_sentence_words} words."
     )
 
 
@@ -271,16 +280,45 @@ def parse_correction_response(text: str) -> tuple[str, str, str, bool]:
                 if action == ACTION_REMOVE:
                     return ACTION_REMOVE, "", reason, True
                 if action == ACTION_KEEP:
-                    return ACTION_KEEP, corrected_sentence, reason, True
+                    return ACTION_KEEP, "", reason, True
                 if action == ACTION_REPLACE and corrected_sentence:
                     return ACTION_REPLACE, corrected_sentence, reason, True
         except json.JSONDecodeError:
             pass
 
-    fallback = normalize_whitespace(cleaned)
-    if fallback and not fallback.startswith("{"):
-        return ACTION_REPLACE, fallback, "Used non-JSON model output as corrected sentence.", False
     return ACTION_ERROR, "", "Could not parse correction model output.", False
+
+
+def validate_corrected_sentence(
+    sentence: str,
+    original_sentence: str,
+    max_sentence_words: int,
+) -> tuple[str, str | None]:
+    sentence = normalize_whitespace(sentence)
+    if not sentence:
+        return "", "Corrected sentence is empty."
+    if FORMAT_ARTIFACT_PATTERN.search(sentence):
+        return "", "Corrected sentence contains response-format artifacts."
+    if "```" in sentence or "{" in sentence or "}" in sentence:
+        return "", "Corrected sentence contains markup or JSON artifacts."
+    word_count = len(simple_tokenize(sentence))
+    if max_sentence_words > 0 and word_count > max_sentence_words:
+        return "", (
+            f"Corrected sentence has {word_count} words, "
+            f"exceeding the {max_sentence_words}-word limit."
+        )
+    original_word_count = len(simple_tokenize(original_sentence))
+    if original_word_count > 0:
+        max_relative_words = max(
+            original_word_count + RELATIVE_LENGTH_BUFFER_WORDS,
+            int(original_word_count * RELATIVE_LENGTH_MULTIPLIER),
+        )
+        if word_count > max_relative_words:
+            return "", (
+                f"Corrected sentence has {word_count} words, exceeding the "
+                f"relative length limit of {max_relative_words} words."
+            )
+    return sentence, None
 
 
 def apply_fallback_action(
@@ -347,10 +385,17 @@ def correct_sentence(
     )
     model_output = corrector.generate(prompt, max_new_tokens=max_new_tokens)
     action, corrected_sentence, reason, parsed = parse_correction_response(model_output)
-    if action == ACTION_KEEP and not corrected_sentence:
+    if action == ACTION_KEEP:
         corrected_sentence = sentence
-    if action == ACTION_REPLACE and not corrected_sentence:
-        action = ACTION_ERROR
+    elif action == ACTION_REPLACE:
+        corrected_sentence, validation_error = validate_corrected_sentence(
+            corrected_sentence,
+            original_sentence=sentence,
+            max_sentence_words=max_sentence_words,
+        )
+        if validation_error:
+            action = ACTION_ERROR
+            reason = validation_error
     return action, corrected_sentence, reason, model_output, parsed
 
 
