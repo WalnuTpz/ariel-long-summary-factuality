@@ -12,6 +12,7 @@ set -euo pipefail
 # Typical usage after running scripts/run_compare_retrieval.sh:
 #   PYTHON=.venv/bin/python \
 #   RUN_DIR=data/results/main_500_compare \
+#   CORRECTION_RUN_DIR=data/results/main_500_rael \
 #   PRIMARY_METHOD=rael \
 #   bash scripts/make_tables.sh
 
@@ -29,12 +30,14 @@ PYTHON_BIN="${PYTHON:-python3}"
 RUN_DIR="${RUN_DIR:-data/results/debug_retrieval_compare}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/tables/$(basename "${RUN_DIR}")}"
 PRIMARY_METHOD="${PRIMARY_METHOD:-rael}"
+CORRECTION_RUN_DIR="${CORRECTION_RUN_DIR:-}"
+CORRECTION_METHOD="${CORRECTION_METHOD:-${PRIMARY_METHOD}}"
 DOCUMENTS="${DOCUMENTS:-}"
 TITLE="${TITLE:-实验结果表格}"
 
 mkdir -p "${OUTPUT_DIR}"
 
-"${PYTHON_BIN}" - "${RUN_DIR}" "${OUTPUT_DIR}" "${PRIMARY_METHOD}" "${DOCUMENTS}" "${TITLE}" <<'PY'
+"${PYTHON_BIN}" - "${RUN_DIR}" "${OUTPUT_DIR}" "${PRIMARY_METHOD}" "${DOCUMENTS}" "${TITLE}" "${CORRECTION_RUN_DIR}" "${CORRECTION_METHOD}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -48,6 +51,8 @@ OUTPUT_DIR = Path(sys.argv[2])
 PRIMARY_METHOD = sys.argv[3]
 DOCUMENTS = Path(sys.argv[4]) if sys.argv[4] else None
 TITLE = sys.argv[5]
+CORRECTION_RUN_DIR = Path(sys.argv[6]) if sys.argv[6] else None
+CORRECTION_METHOD = sys.argv[7]
 
 METHOD_LABELS = {
     "bm25": "BM25 + NLI",
@@ -301,7 +306,12 @@ def correction_rows(summary: dict[str, Any]) -> list[list[str]]:
     return rows
 
 
-def notes(summaries: dict[str, dict[str, Any]], primary_method: str | None) -> str:
+def notes(
+    summaries: dict[str, dict[str, Any]],
+    primary_method: str | None,
+    correction_run_dir: Path | None,
+    correction_method: str | None,
+) -> str:
     lines = [
         "### 表格说明",
         "",
@@ -312,6 +322,10 @@ def notes(summaries: dict[str, dict[str, Any]], primary_method: str | None) -> s
     ]
     if primary_method:
         lines.append(f"- 主方法表默认使用 `{METHOD_LABELS.get(primary_method, primary_method)}`。")
+    if correction_run_dir and correction_method:
+        lines.append(
+            f"- 表 5 使用 `{correction_run_dir}` 中的 `{METHOD_LABELS.get(correction_method, correction_method)}` 纠错结果。"
+        )
     if not summaries:
         lines.append("- 未在 RUN_DIR 中找到 `evaluation.*.summary.json`。")
     return "\n".join(lines) + "\n"
@@ -322,8 +336,29 @@ def main() -> None:
     summaries = load_summaries(RUN_DIR)
     primary_method = choose_primary_method(summaries, PRIMARY_METHOD)
     primary_summary = summaries.get(primary_method, {}) if primary_method else {}
+    correction_summaries = load_summaries(CORRECTION_RUN_DIR) if CORRECTION_RUN_DIR else {}
+    correction_method = (
+        choose_primary_method(correction_summaries, CORRECTION_METHOD)
+        if correction_summaries
+        else primary_method
+    )
+    correction_summary = (
+        correction_summaries.get(correction_method, {})
+        if correction_summaries and correction_method
+        else primary_summary
+    )
+    if correction_summary and not get_version(correction_summary, "after_correction"):
+        print(
+            "warning: table 5 has no after_correction data; "
+            "set CORRECTION_RUN_DIR to a run_pipeline output directory.",
+            file=sys.stderr,
+        )
 
-    sections = [f"# {TITLE}\n\n", notes(summaries, primary_method), "\n"]
+    sections = [
+        f"# {TITLE}\n\n",
+        notes(summaries, primary_method, CORRECTION_RUN_DIR, correction_method),
+        "\n",
+    ]
 
     sections.append(
         write_table(
@@ -403,7 +438,7 @@ def main() -> None:
                 "Error Reduction Rate ↑",
                 "Length Ratio",
             ],
-            correction_rows(primary_summary) if primary_summary else [],
+            correction_rows(correction_summary) if correction_summary else [],
             ["left", "right", "right", "right", "right", "right", "right", "right"],
         )
     )
@@ -415,6 +450,10 @@ def main() -> None:
     print(f"combined_tables: {combined_path}")
     if primary_method:
         print(f"primary_method: {primary_method}")
+    if CORRECTION_RUN_DIR:
+        print(f"correction_run_dir: {CORRECTION_RUN_DIR}")
+    if correction_method:
+        print(f"correction_method: {correction_method}")
     print(f"summary_files: {len(summaries)}")
 
 
