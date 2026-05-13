@@ -21,9 +21,11 @@ SUMMARY_TEXT_KEYS = (
 
 ABBREVIATIONS = (
     "U.S.",
+    "U.S.C.",
     "U.K.",
     "U.N.",
     "D.C.",
+    "C.F.R.",
     "Mr.",
     "Mrs.",
     "Ms.",
@@ -33,12 +35,25 @@ ABBREVIATIONS = (
     "Rep.",
     "Gov.",
     "No.",
+    "Sec.",
     "Fig.",
     "fig.",
     "e.g.",
     "i.e.",
 )
 
+DEFAULT_MIN_SENTENCE_CHARS = 8
+LEGAL_REFERENCE_PATTERNS = (
+    re.compile(r"\bS\.(?=\s+\d)"),
+    re.compile(r"\bH\.R\.(?=\s+\d)"),
+    re.compile(r"\bS\. Res\.(?=\s+\d)"),
+    re.compile(r"\bH\. Res\.(?=\s+\d)"),
+    re.compile(r"\bPub\. L\. No\.(?=\s+\d)"),
+    re.compile(r"\bP\.L\.(?=\s+\d)"),
+)
+NUMBERED_LIST_MARKER_PATTERN = re.compile(
+    r"(?:(?<=^)|(?<=[\s:;(\[]))\d{1,3}\.(?=\s+[A-Za-z])"
+)
 SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[\"'(\[]?[A-Z0-9])")
 DECIMAL_DOT_PATTERN = re.compile(r"(?<=\d)\.(?=\d)")
 DOT_PLACEHOLDER = "<DOT>"
@@ -58,6 +73,15 @@ class SplitStats:
 
 def protect_sentence_text(text: str) -> str:
     protected = text
+    for pattern in LEGAL_REFERENCE_PATTERNS:
+        protected = pattern.sub(
+            lambda match: match.group(0).replace(".", DOT_PLACEHOLDER),
+            protected,
+        )
+    protected = NUMBERED_LIST_MARKER_PATTERN.sub(
+        lambda match: match.group(0).replace(".", DOT_PLACEHOLDER),
+        protected,
+    )
     for abbreviation in ABBREVIATIONS:
         protected = protected.replace(abbreviation, abbreviation.replace(".", DOT_PLACEHOLDER))
     return DECIMAL_DOT_PATTERN.sub(DOT_PLACEHOLDER, protected)
@@ -125,7 +149,7 @@ def make_sentence_record(
 def split_summary_records(
     summaries: Iterable[dict[str, Any]],
     summary_field: str | None = None,
-    min_sentence_chars: int = 1,
+    min_sentence_chars: int = DEFAULT_MIN_SENTENCE_CHARS,
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], SplitStats]:
     stats = SplitStats()
@@ -174,7 +198,7 @@ def split_summary_jsonl(
     input_path: str | Path,
     output_path: str | Path,
     summary_field: str | None = None,
-    min_sentence_chars: int = 1,
+    min_sentence_chars: int = DEFAULT_MIN_SENTENCE_CHARS,
     limit: int | None = None,
 ) -> SplitStats:
     records, stats = split_summary_records(
@@ -202,7 +226,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-sentence-chars",
         type=int,
-        default=1,
+        default=DEFAULT_MIN_SENTENCE_CHARS,
         help="Skip sentence fragments shorter than this many characters.",
     )
     parser.add_argument(
