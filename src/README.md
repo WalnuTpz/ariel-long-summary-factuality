@@ -25,9 +25,9 @@ Current batch:
   evidence. It supports concatenated evidence and per-chunk aggregation; the
   final experiment should use a course-recommended NLI model such as
   `facebook/bart-large-mnli`.
-- `correct_local.py`: perform evidence-constrained local correction for
-  Unsupported and Not Enough Information summary sentences, then reconstruct
-  the corrected summary.
+- `correct_local.py`: perform evidence-conditioned local rewrite for
+  Unsupported summary sentences and high-confidence Not Enough Information
+  sentences, then reconstruct the corrected summary.
 - `evaluate_summary.py`: compute dependency-free ROUGE-1/2/L, sentence-level
   factuality ratios, length ratios, error reduction, and length-bucket
   aggregate statistics.

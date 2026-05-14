@@ -1,9 +1,9 @@
-"""Evidence-constrained local correction for generated summaries.
+"""Evidence-conditioned local rewrite for generated summaries.
 
 This module rewrites only summary sentences flagged as factual risks by the
 sentence-level verifier. Supported sentences are copied unchanged, and risky
-sentences are corrected with retrieved evidence instead of freely rewriting the
-whole summary.
+sentences are conservatively rewritten with retrieved evidence instead of freely
+rewriting the whole summary.
 """
 
 from __future__ import annotations
@@ -24,7 +24,12 @@ from src.utils import (
     normalize_whitespace,
     simple_tokenize,
 )
-from src.verification_schema import FACTUAL_RISK_LABELS, SUPPORTED
+from src.verification_schema import (
+    FACTUAL_RISK_LABELS,
+    NOT_ENOUGH_INFO,
+    SUPPORTED,
+    UNSUPPORTED,
+)
 
 
 SUMMARY_TEXT_KEYS = (
@@ -38,6 +43,9 @@ ACTION_REPLACE = "replace"
 ACTION_REMOVE = "remove"
 ACTION_KEEP = "keep"
 ACTION_ERROR = "error"
+RAW_CONTRADICTION = "contradiction"
+RAW_NEUTRAL = "neutral"
+DEFAULT_NEUTRAL_REWRITE_THRESHOLD = 0.7
 FORMAT_ARTIFACT_PATTERN = re.compile(
     r"\b(?:action|corrected\s+sentence|reason|original\s+sentence|evidence)\s*:",
     flags=re.I,
@@ -206,40 +214,30 @@ def correction_prompt(
     sentence: str,
     label: str,
     evidence: list[dict[str, str]],
-    previous_sentence: str,
-    next_sentence: str,
     max_sentence_words: int,
 ) -> str:
-    context_parts = []
-    if previous_sentence:
-        context_parts.append(f"Previous sentence: {previous_sentence}")
-    if next_sentence:
-        context_parts.append(f"Next sentence: {next_sentence}")
-    context = "\n".join(context_parts) if context_parts else "No adjacent sentence context."
-
     return (
-        "You are correcting one factual-risk sentence in a generated summary. "
-        "Use only the evidence below. Do not add facts that are not supported "
-        "by the evidence. Keep the sentence concise and compatible with the "
-        "neighboring summary sentences.\n\n"
+        "You are a factual consistency correction model. Given several evidence "
+        "passages from the source document and one summary sentence, rewrite "
+        "the summary sentence to make it factually consistent with the evidence.\n\n"
         f"Verification label: {label}\n"
-        f"Original sentence: {sentence}\n\n"
-        f"{context}\n\n"
-        f"{format_evidence(evidence)}\n\n"
+        f"Evidence passages:\n{format_evidence(evidence)}\n\n"
+        f"Original summary sentence:\n{sentence}\n\n"
+        "Instructions:\n"
+        "- Only correct factual errors in the original sentence.\n"
+        "- Keep the sentence as close as possible to the original wording and structure.\n"
+        "- Do not add information that is not explicitly supported by the evidence.\n"
+        "- If a number, date, entity, or relation conflicts with the evidence, "
+        "replace it with the supported one.\n"
+        "- If some content is not supported by the evidence, remove only that "
+        "unsupported part, not the whole sentence.\n"
+        f"- Keep the corrected sentence under {max_sentence_words} words.\n\n"
         "Return JSON only with this schema:\n"
         "{"
-        '"action": "replace|remove|keep", '
-        '"corrected_sentence": "...", '
-        '"reason": "..."'
+        '"corrected_sentence": "..."'
         "}\n\n"
         "Output exactly one JSON object. Do not include markdown, labels, "
-        "explanations, or any text outside the JSON object. "
-        "Use action=replace when the sentence can be made factual from the "
-        "evidence. Use action=remove when the sentence is unsupported or cannot "
-        "be repaired without inventing information. Use action=keep only if the "
-        "original sentence is already fully supported. For action=keep, leave "
-        '"corrected_sentence" empty. If replacing, keep the corrected sentence '
-        f"under {max_sentence_words} words."
+        "explanations, or any text outside the JSON object."
     )
 
 
@@ -248,17 +246,6 @@ def strip_code_fence(text: str) -> str:
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
     text = re.sub(r"\s*```$", "", text)
     return text.strip()
-
-
-def normalize_action(value: Any) -> str:
-    action = str(value or "").strip().lower()
-    if action in {"remove", "delete", "drop", "omit"}:
-        return ACTION_REMOVE
-    if action in {"keep", "unchanged", "retain"}:
-        return ACTION_KEEP
-    if action in {"replace", "rewrite", "revise", "correct"}:
-        return ACTION_REPLACE
-    return ""
 
 
 def parse_correction_response(text: str) -> tuple[str, str, str, bool]:
@@ -272,16 +259,11 @@ def parse_correction_response(text: str) -> tuple[str, str, str, bool]:
         try:
             item = json.loads(json_text)
             if isinstance(item, dict):
-                action = normalize_action(item.get("action"))
                 corrected_sentence = normalize_whitespace(
                     item.get("corrected_sentence") or item.get("sentence") or ""
                 )
                 reason = normalize_whitespace(item.get("reason"))
-                if action == ACTION_REMOVE:
-                    return ACTION_REMOVE, "", reason, True
-                if action == ACTION_KEEP:
-                    return ACTION_KEEP, "", reason, True
-                if action == ACTION_REPLACE and corrected_sentence:
+                if corrected_sentence:
                     return ACTION_REPLACE, corrected_sentence, reason, True
         except json.JSONDecodeError:
             pass
@@ -325,9 +307,49 @@ def apply_fallback_action(
     fallback_action: str,
     original_sentence: str,
 ) -> tuple[str, str, str]:
-    if fallback_action == ACTION_REMOVE:
-        return ACTION_REMOVE, "", "Correction failed; removed risky sentence as fallback."
-    return ACTION_KEEP, original_sentence, "Correction failed; kept original sentence as fallback."
+    return (
+        ACTION_KEEP,
+        original_sentence,
+        "Correction failed; kept original sentence as fallback.",
+    )
+
+
+def score_for_raw_label(verification: dict[str, Any], raw_label: str) -> float:
+    scores = verification.get("scores")
+    if not isinstance(scores, dict):
+        return 0.0
+    try:
+        return float(scores.get(raw_label, 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def should_rewrite_sentence(
+    verification: dict[str, Any],
+    neutral_rewrite_threshold: float,
+) -> tuple[bool, str]:
+    label = str(verification.get("label") or "").strip()
+    contradiction_score = score_for_raw_label(verification, RAW_CONTRADICTION)
+    neutral_score = score_for_raw_label(verification, RAW_NEUTRAL)
+
+    if label == UNSUPPORTED:
+        return True, (
+            "Rewritten because verification predicted contradiction "
+            f"(score={contradiction_score:.3f})."
+        )
+
+    if label == NOT_ENOUGH_INFO:
+        if neutral_score >= neutral_rewrite_threshold:
+            return True, (
+                "Rewritten because verification predicted high-confidence neutral "
+                f"(score={neutral_score:.3f}, threshold={neutral_rewrite_threshold:.3f})."
+            )
+        return False, (
+            "Kept because neutral verification confidence was below the rewrite "
+            f"threshold (score={neutral_score:.3f}, threshold={neutral_rewrite_threshold:.3f})."
+        )
+
+    return False, "Kept because the sentence was not selected for local rewrite."
 
 
 def make_sentence_edit(
@@ -370,8 +392,6 @@ def correct_sentence(
     sentence: str,
     label: str,
     evidence: list[dict[str, str]],
-    previous_sentence: str,
-    next_sentence: str,
     max_sentence_words: int,
     max_new_tokens: int,
 ) -> tuple[str, str, str, str, bool]:
@@ -379,15 +399,11 @@ def correct_sentence(
         sentence=sentence,
         label=label,
         evidence=evidence,
-        previous_sentence=previous_sentence,
-        next_sentence=next_sentence,
         max_sentence_words=max_sentence_words,
     )
     model_output = corrector.generate(prompt, max_new_tokens=max_new_tokens)
     action, corrected_sentence, reason, parsed = parse_correction_response(model_output)
-    if action == ACTION_KEEP:
-        corrected_sentence = sentence
-    elif action == ACTION_REPLACE:
+    if action == ACTION_REPLACE:
         corrected_sentence, validation_error = validate_corrected_sentence(
             corrected_sentence,
             original_sentence=sentence,
@@ -414,6 +430,7 @@ def build_corrected_record(
     max_sentence_words: int,
     max_new_tokens: int,
     fallback_action: str,
+    neutral_rewrite_threshold: float,
     stats: CorrectionStats,
     continue_on_error: bool,
     save_model_outputs: bool,
@@ -438,12 +455,27 @@ def build_corrected_record(
             continue
 
         stats.risk_sentences += 1
-        previous_sentence = str(sentence_records[index - 1].get("text") or "") if index > 0 else ""
-        next_sentence = (
-            str(sentence_records[index + 1].get("text") or "")
-            if index + 1 < len(sentence_records)
-            else ""
+        should_rewrite, decision_reason = should_rewrite_sentence(
+            verification=verification,
+            neutral_rewrite_threshold=neutral_rewrite_threshold,
         )
+        if not should_rewrite:
+            action = ACTION_KEEP
+            corrected_sentence = sentence
+            count_action(stats, action)
+            corrected_sentences.append(sentence)
+            sentence_edits.append(
+                make_sentence_edit(
+                    sentence_record=sentence_record,
+                    verification=verification,
+                    corrected_sentence=corrected_sentence,
+                    action=action,
+                    reason=decision_reason,
+                    model_output=None,
+                )
+            )
+            continue
+
         evidence = selected_first_evidence(
             verification,
             max_evidence_chunks=max_evidence_chunks,
@@ -456,8 +488,6 @@ def build_corrected_record(
                 sentence=sentence,
                 label=label,
                 evidence=evidence,
-                previous_sentence=previous_sentence,
-                next_sentence=next_sentence,
                 max_sentence_words=max_sentence_words,
                 max_new_tokens=max_new_tokens,
             )
@@ -481,10 +511,11 @@ def build_corrected_record(
                 fallback_action=fallback_action,
                 original_sentence=sentence,
             )
+        elif not reason:
+            reason = decision_reason
 
         count_action(stats, action)
-        if action != ACTION_REMOVE:
-            corrected_sentences.append(corrected_sentence or sentence)
+        corrected_sentences.append(corrected_sentence or sentence)
 
         sentence_edits.append(
             make_sentence_edit(
@@ -530,11 +561,12 @@ def correct_local_jsonl(
     do_sample: bool = False,
     temperature: float = 0.7,
     top_p: float = 0.9,
-    max_new_tokens: int = 160,
+    max_new_tokens: int = 128,
     max_evidence_chunks: int = 3,
     max_evidence_chars: int = 1200,
     max_sentence_words: int = 45,
     fallback_action: str = ACTION_KEEP,
+    neutral_rewrite_threshold: float = DEFAULT_NEUTRAL_REWRITE_THRESHOLD,
     limit: int | None = None,
     continue_on_error: bool = False,
     save_model_outputs: bool = False,
@@ -586,6 +618,7 @@ def correct_local_jsonl(
                 max_sentence_words=max_sentence_words,
                 max_new_tokens=max_new_tokens,
                 fallback_action=fallback_action,
+                neutral_rewrite_threshold=neutral_rewrite_threshold,
                 stats=stats,
                 continue_on_error=continue_on_error,
                 save_model_outputs=save_model_outputs,
@@ -633,7 +666,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=160,
+        default=128,
         help="Maximum new tokens for each corrected sentence.",
     )
     parser.add_argument(
@@ -656,9 +689,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--fallback-action",
-        choices=[ACTION_KEEP, ACTION_REMOVE],
+        choices=[ACTION_KEEP],
         default=ACTION_KEEP,
-        help="Fallback action when correction generation fails.",
+        help=(
+            "Deprecated compatibility option. Failed rewrites are kept to avoid "
+            "sentence-level deletion."
+        ),
+    )
+    parser.add_argument(
+        "--neutral-rewrite-threshold",
+        type=float,
+        default=DEFAULT_NEUTRAL_REWRITE_THRESHOLD,
+        help=(
+            "Only rewrite Not Enough Information / neutral sentences when the "
+            "neutral NLI score is at least this value."
+        ),
     )
     parser.add_argument(
         "--local-files-only",
@@ -718,6 +763,7 @@ def main() -> None:
         max_evidence_chars=args.max_evidence_chars,
         max_sentence_words=args.max_sentence_words,
         fallback_action=args.fallback_action,
+        neutral_rewrite_threshold=args.neutral_rewrite_threshold,
         limit=args.limit,
         continue_on_error=args.continue_on_error,
         save_model_outputs=args.save_model_outputs,
