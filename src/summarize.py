@@ -21,8 +21,16 @@ from src.utils import ensure_parent_dir, first_present, iter_jsonl, normalize_wh
 DEFAULT_MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 DOC_ID_KEYS = ("doc_id", "document_id", "id", "sample_id")
 SYSTEM_PROMPT = (
-    "You are a careful long-document summarization assistant. Write faithful "
-    "summaries grounded only in the provided government report text."
+    "You are a faithful government-report summarizer. Output only plain "
+    "summary text. No Markdown, bullets, headings, word counts, explanations, "
+    "or chatty text."
+)
+PLAIN_OUTPUT_RULES = (
+    "- Write plain paragraphs only.\n"
+    "- Do not use Markdown, headings, bullet points, numbered lists, tables, "
+    "or word counts.\n"
+    "- Do not include explanations, notes, greetings, disclaimers, or offers "
+    "to help."
 )
 
 
@@ -66,12 +74,13 @@ def chunk_prompt(title: str, section_text: str, target_words: int) -> str:
     title_line = f"Title: {title}\n\n" if title else ""
     section_words = max(120, min(180, target_words // 2))
     return (
-        "Summarize this section of a U.S. government report in "
-        f"about {section_words} words. Preserve important entities, dates, "
-        "numbers, findings, and recommendations. Do not add facts that are "
-        "not stated in the section.\n\n"
+        f"Summarize this report excerpt in about {section_words} words.\n\n"
+        "Rules:\n"
+        "- Use only facts stated in the excerpt.\n"
+        "- Keep key entities, dates, numbers, findings, and recommendations.\n"
+        f"{PLAIN_OUTPUT_RULES}\n\n"
         f"{title_line}"
-        "Report section:\n"
+        "Excerpt:\n"
         f"{section_text}"
     )
 
@@ -79,12 +88,13 @@ def chunk_prompt(title: str, section_text: str, target_words: int) -> str:
 def single_pass_prompt(title: str, document: str, target_words: int) -> str:
     title_line = f"Title: {title}\n\n" if title else ""
     return (
-        "Summarize the following U.S. government report in "
-        f"about {target_words} words. Preserve important entities, dates, "
-        "numbers, findings, and recommendations. Do not add facts that are "
-        "not stated in the report.\n\n"
+        f"Summarize the government report in about {target_words} words.\n\n"
+        "Rules:\n"
+        "- Use only facts stated in the report.\n"
+        "- Keep key entities, dates, numbers, findings, and recommendations.\n"
+        f"{PLAIN_OUTPUT_RULES}\n\n"
         f"{title_line}"
-        "Report text:\n"
+        "Report:\n"
         f"{document}"
     )
 
@@ -92,12 +102,15 @@ def single_pass_prompt(title: str, document: str, target_words: int) -> str:
 def final_prompt(title: str, summary_source: str, target_words: int) -> str:
     title_line = f"Title: {title}\n\n" if title else ""
     return (
-        "Merge the following section summaries into one coherent factual "
-        f"summary of the whole government report in about {target_words} "
-        "words. Remove repetition, keep concrete entities and numbers when "
-        "they are central, and avoid unsupported claims.\n\n"
+        "Merge the intermediate summaries into one factual summary in about "
+        f"{target_words} words.\n\n"
+        "Rules:\n"
+        "- Remove repetition.\n"
+        "- Use only facts supported by the intermediate summaries.\n"
+        "- Do not mention sections or intermediate summaries.\n"
+        f"{PLAIN_OUTPUT_RULES}\n\n"
         f"{title_line}"
-        "Section summaries:\n"
+        "Intermediate summaries:\n"
         f"{summary_source}"
     )
 
@@ -277,7 +290,7 @@ def summarize_document(
             )
             chunk_summary = summarizer.generate(prompt, max_new_tokens=chunk_max_new_tokens)
             if chunk_summary:
-                chunk_summaries.append(f"Section {chunk_index}: {chunk_summary}")
+                chunk_summaries.append(f"Intermediate summary {chunk_index}: {chunk_summary}")
         if not chunk_summaries:
             raise RuntimeError(f"Model generated no section summaries for {doc_id}.")
         generated_summary = summarizer.generate(
