@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from src.summarize import DEFAULT_MODEL_NAME, HuggingFaceSummarizer
+from src.split_summary_sentences import split_sentences
 from src.utils import (
     ensure_parent_dir,
     first_present,
@@ -62,6 +63,35 @@ FORMAT_ARTIFACT_PATTERN = re.compile(
 )
 RELATIVE_LENGTH_BUFFER_WORDS = 8
 RELATIVE_LENGTH_MULTIPLIER = 1.8
+DEFAULT_MAX_EVIDENCE_SENTENCES = 5
+EVIDENCE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "has",
+    "have",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "this",
+    "to",
+    "was",
+    "were",
+    "with",
+}
 
 
 @dataclass
@@ -183,8 +213,10 @@ def clip_text(text: str, max_chars: int) -> str:
 
 def selected_first_evidence(
     verification: dict[str, Any],
+    query_sentence: str,
     max_evidence_chunks: int,
     max_evidence_chars: int,
+    max_evidence_sentences: int,
 ) -> list[dict[str, str]]:
     evidence_texts = verification.get("evidence") or []
     evidence_ids = verification.get("evidence_ids") or []
@@ -200,14 +232,97 @@ def selected_first_evidence(
         evidence.append(
             {
                 "chunk_id": chunk_id,
-                "text": clip_text(text, max_evidence_chars),
+                "text": text,
             }
         )
 
     selected_id = str(verification.get("selected_evidence_id") or "").strip()
     if selected_id:
         evidence.sort(key=lambda item: 0 if item["chunk_id"] == selected_id else 1)
-    return evidence[:max_evidence_chunks]
+    evidence = evidence[:max_evidence_chunks]
+    return select_relevant_evidence_sentences(
+        query_sentence=query_sentence,
+        evidence=evidence,
+        max_evidence_chars=max_evidence_chars,
+        max_evidence_sentences=max_evidence_sentences,
+    )
+
+
+def evidence_terms(text: str) -> set[str]:
+    return {
+        token
+        for token in simple_tokenize(text)
+        if token not in EVIDENCE_STOPWORDS and len(token) > 1
+    }
+
+
+def evidence_sentence_score(query_terms: set[str], sentence: str) -> float:
+    sentence_terms = evidence_terms(sentence)
+    if not sentence_terms:
+        return 0.0
+    overlap = query_terms & sentence_terms
+    if not overlap:
+        return 0.0
+    return len(overlap) / (len(sentence_terms) ** 0.5)
+
+
+def select_relevant_evidence_sentences(
+    query_sentence: str,
+    evidence: list[dict[str, str]],
+    max_evidence_chars: int,
+    max_evidence_sentences: int,
+) -> list[dict[str, str]]:
+    if max_evidence_sentences <= 0:
+        return [
+            {
+                "chunk_id": item.get("chunk_id", ""),
+                "text": clip_text(item.get("text", ""), max_evidence_chars),
+            }
+            for item in evidence
+        ]
+
+    query_terms = evidence_terms(query_sentence)
+    candidates: list[dict[str, Any]] = []
+    for chunk_rank, item in enumerate(evidence):
+        chunk_id = item.get("chunk_id", "")
+        sentences = split_sentences(item.get("text", ""))
+        if not sentences and item.get("text"):
+            sentences = [item["text"]]
+
+        for sentence_index, sentence in enumerate(sentences):
+            sentence = normalize_whitespace(sentence)
+            if not sentence:
+                continue
+            candidates.append(
+                {
+                    "chunk_id": chunk_id,
+                    "sentence_index": sentence_index,
+                    "chunk_rank": chunk_rank,
+                    "score": evidence_sentence_score(query_terms, sentence),
+                    "text": sentence,
+                }
+            )
+
+    if not candidates:
+        return evidence
+
+    candidates.sort(
+        key=lambda item: (
+            -float(item["score"]),
+            int(item["chunk_rank"]),
+            int(item["sentence_index"]),
+        )
+    )
+    selected = candidates[:max_evidence_sentences]
+    selected.sort(key=lambda item: (int(item["chunk_rank"]), int(item["sentence_index"])))
+    return [
+        {
+            "chunk_id": str(item["chunk_id"]),
+            "text": clip_text(str(item["text"]), max_evidence_chars),
+            "sentence_index": str(item["sentence_index"]),
+        }
+        for item in selected
+    ]
 
 
 def format_evidence(evidence: list[dict[str, str]]) -> str:
@@ -216,6 +331,9 @@ def format_evidence(evidence: list[dict[str, str]]) -> str:
     blocks: list[str] = []
     for index, item in enumerate(evidence, start=1):
         chunk_id = item["chunk_id"] or f"evidence_{index}"
+        sentence_index = item.get("sentence_index")
+        if sentence_index is not None:
+            chunk_id = f"{chunk_id}:s{sentence_index}"
         blocks.append(f"Evidence {index} [{chunk_id}]:\n{item['text']}")
     return "\n\n".join(blocks)
 
@@ -480,6 +598,7 @@ def build_corrected_record(
     model_name: str,
     max_evidence_chunks: int,
     max_evidence_chars: int,
+    max_evidence_sentences: int,
     max_sentence_words: int,
     max_new_tokens: int,
     fallback_action: str,
@@ -531,8 +650,10 @@ def build_corrected_record(
 
         evidence = selected_first_evidence(
             verification,
+            query_sentence=sentence,
             max_evidence_chunks=max_evidence_chunks,
             max_evidence_chars=max_evidence_chars,
+            max_evidence_sentences=max_evidence_sentences,
         )
 
         fallback_reason: str | None = None
@@ -630,6 +751,7 @@ def correct_local_jsonl(
     max_new_tokens: int = 128,
     max_evidence_chunks: int = 3,
     max_evidence_chars: int = 1200,
+    max_evidence_sentences: int = DEFAULT_MAX_EVIDENCE_SENTENCES,
     max_sentence_words: int = 45,
     fallback_action: str = ACTION_KEEP,
     neutral_rewrite_threshold: float = DEFAULT_NEUTRAL_REWRITE_THRESHOLD,
@@ -681,6 +803,7 @@ def correct_local_jsonl(
                 model_name=model_name,
                 max_evidence_chunks=max_evidence_chunks,
                 max_evidence_chars=max_evidence_chars,
+                max_evidence_sentences=max_evidence_sentences,
                 max_sentence_words=max_sentence_words,
                 max_new_tokens=max_new_tokens,
                 fallback_action=fallback_action,
@@ -745,7 +868,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--max-evidence-chars",
         type=int,
         default=1200,
-        help="Maximum characters kept for each evidence chunk.",
+        help="Maximum characters kept for each selected evidence sentence.",
+    )
+    parser.add_argument(
+        "--max-evidence-sentences",
+        type=int,
+        default=DEFAULT_MAX_EVIDENCE_SENTENCES,
+        help="Maximum evidence sentences extracted from retrieved chunks for correction.",
     )
     parser.add_argument(
         "--max-sentence-words",
@@ -827,6 +956,7 @@ def main() -> None:
         max_new_tokens=args.max_new_tokens,
         max_evidence_chunks=args.max_evidence_chunks,
         max_evidence_chars=args.max_evidence_chars,
+        max_evidence_sentences=args.max_evidence_sentences,
         max_sentence_words=args.max_sentence_words,
         fallback_action=args.fallback_action,
         neutral_rewrite_threshold=args.neutral_rewrite_threshold,
