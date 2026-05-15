@@ -43,6 +43,16 @@ ACTION_REPLACE = "replace"
 ACTION_REMOVE = "remove"
 ACTION_KEEP = "keep"
 ACTION_ERROR = "error"
+FALLBACK_EMPTY_OUTPUT = "empty_model_output"
+FALLBACK_JSON_NOT_FOUND = "json_not_found"
+FALLBACK_JSON_DECODE = "json_decode_error"
+FALLBACK_JSON_NOT_OBJECT = "json_not_object"
+FALLBACK_EMPTY_SENTENCE = "empty_corrected_sentence"
+FALLBACK_FORMAT_ARTIFACT = "format_artifact"
+FALLBACK_MARKUP_ARTIFACT = "markup_or_json_artifact"
+FALLBACK_ABSOLUTE_LENGTH = "absolute_length_limit"
+FALLBACK_RELATIVE_LENGTH = "relative_length_limit"
+FALLBACK_MODEL_EXCEPTION = "model_exception"
 RAW_CONTRADICTION = "contradiction"
 RAW_NEUTRAL = "neutral"
 DEFAULT_NEUTRAL_REWRITE_THRESHOLD = 0.7
@@ -250,10 +260,16 @@ def strip_code_fence(text: str) -> str:
 
 def parse_correction_response(text: str) -> tuple[str, str, str, bool]:
     cleaned = strip_code_fence(text)
+    if not cleaned:
+        return ACTION_ERROR, "", "empty_model_output: correction model returned no text.", False
+
     json_text = cleaned
     if not json_text.startswith("{"):
         match = re.search(r"\{.*\}", cleaned, flags=re.S)
         json_text = match.group(0) if match else ""
+
+    if not json_text:
+        return ACTION_ERROR, "", "json_not_found: correction output did not contain JSON.", False
 
     if json_text:
         try:
@@ -265,10 +281,17 @@ def parse_correction_response(text: str) -> tuple[str, str, str, bool]:
                 reason = normalize_whitespace(item.get("reason"))
                 if corrected_sentence:
                     return ACTION_REPLACE, corrected_sentence, reason, True
-        except json.JSONDecodeError:
-            pass
+                return (
+                    ACTION_ERROR,
+                    "",
+                    "empty_corrected_sentence: JSON did not contain a corrected sentence.",
+                    True,
+                )
+            return ACTION_ERROR, "", "json_not_object: correction JSON was not an object.", True
+        except json.JSONDecodeError as exc:
+            return ACTION_ERROR, "", f"json_decode_error: {exc}", False
 
-    return ACTION_ERROR, "", "Could not parse correction model output.", False
+    return ACTION_ERROR, "", "json_not_found: correction output did not contain JSON.", False
 
 
 def validate_corrected_sentence(
@@ -278,15 +301,15 @@ def validate_corrected_sentence(
 ) -> tuple[str, str | None]:
     sentence = normalize_whitespace(sentence)
     if not sentence:
-        return "", "Corrected sentence is empty."
+        return "", "empty_corrected_sentence: corrected sentence is empty."
     if FORMAT_ARTIFACT_PATTERN.search(sentence):
-        return "", "Corrected sentence contains response-format artifacts."
+        return "", "format_artifact: corrected sentence contains response-format artifacts."
     if "```" in sentence or "{" in sentence or "}" in sentence:
-        return "", "Corrected sentence contains markup or JSON artifacts."
+        return "", "markup_or_json_artifact: corrected sentence contains markup or JSON artifacts."
     word_count = len(simple_tokenize(sentence))
     if max_sentence_words > 0 and word_count > max_sentence_words:
         return "", (
-            f"Corrected sentence has {word_count} words, "
+            f"absolute_length_limit: corrected sentence has {word_count} words, "
             f"exceeding the {max_sentence_words}-word limit."
         )
     original_word_count = len(simple_tokenize(original_sentence))
@@ -297,7 +320,7 @@ def validate_corrected_sentence(
         )
         if word_count > max_relative_words:
             return "", (
-                f"Corrected sentence has {word_count} words, exceeding the "
+                f"relative_length_limit: corrected sentence has {word_count} words, exceeding the "
                 f"relative length limit of {max_relative_words} words."
             )
     return sentence, None
@@ -306,12 +329,35 @@ def validate_corrected_sentence(
 def apply_fallback_action(
     fallback_action: str,
     original_sentence: str,
+    failure_reason: str,
 ) -> tuple[str, str, str]:
+    failure_reason = normalize_whitespace(failure_reason) or "unknown_error: correction failed."
     return (
         ACTION_KEEP,
         original_sentence,
-        "Correction failed; kept original sentence as fallback.",
+        f"Correction fallback; kept original sentence. Reason: {failure_reason}",
     )
+
+
+def fallback_reason_code(reason: str) -> str:
+    reason = normalize_whitespace(reason)
+    if ":" in reason:
+        candidate = reason.split(":", 1)[0].strip()
+        known_codes = {
+            FALLBACK_EMPTY_OUTPUT,
+            FALLBACK_JSON_NOT_FOUND,
+            FALLBACK_JSON_DECODE,
+            FALLBACK_JSON_NOT_OBJECT,
+            FALLBACK_EMPTY_SENTENCE,
+            FALLBACK_FORMAT_ARTIFACT,
+            FALLBACK_MARKUP_ARTIFACT,
+            FALLBACK_ABSOLUTE_LENGTH,
+            FALLBACK_RELATIVE_LENGTH,
+            FALLBACK_MODEL_EXCEPTION,
+        }
+        if candidate in known_codes:
+            return candidate
+    return "unknown_error"
 
 
 def score_for_raw_label(verification: dict[str, Any], raw_label: str) -> float:
@@ -358,6 +404,7 @@ def make_sentence_edit(
     corrected_sentence: str,
     action: str,
     reason: str,
+    fallback_reason: str | None = None,
     model_output: str | None = None,
 ) -> dict[str, Any]:
     edit = {
@@ -371,6 +418,8 @@ def make_sentence_edit(
         "action": action,
         "reason": reason,
     }
+    if fallback_reason:
+        edit["fallback_reason"] = fallback_reason
     if model_output is not None:
         edit["model_output"] = model_output
     return edit
@@ -482,6 +531,7 @@ def build_corrected_record(
             max_evidence_chars=max_evidence_chars,
         )
 
+        fallback_reason: str | None = None
         try:
             action, corrected_sentence, reason, model_output, parsed = correct_sentence(
                 corrector=corrector,
@@ -495,10 +545,13 @@ def build_corrected_record(
             stats.failed_corrections += 1
             if not continue_on_error:
                 raise
+            failure_reason = f"{FALLBACK_MODEL_EXCEPTION}: {exc}"
             action, corrected_sentence, reason = apply_fallback_action(
                 fallback_action=fallback_action,
                 original_sentence=sentence,
+                failure_reason=failure_reason,
             )
+            fallback_reason = fallback_reason_code(failure_reason)
             model_output = f"correction_error: {exc}"
             parsed = True
 
@@ -507,10 +560,13 @@ def build_corrected_record(
 
         if action == ACTION_ERROR:
             stats.failed_corrections += 1
+            failure_reason = reason
             action, corrected_sentence, reason = apply_fallback_action(
                 fallback_action=fallback_action,
                 original_sentence=sentence,
+                failure_reason=failure_reason,
             )
+            fallback_reason = fallback_reason_code(failure_reason)
         elif not reason:
             reason = decision_reason
 
@@ -524,6 +580,7 @@ def build_corrected_record(
                 corrected_sentence=corrected_sentence,
                 action=action,
                 reason=reason,
+                fallback_reason=fallback_reason,
                 model_output=model_output if save_model_outputs else None,
             )
         )
