@@ -436,6 +436,10 @@ def count_action(stats: CorrectionStats, action: str) -> None:
         stats.failed_corrections += 1
 
 
+def same_normalized_sentence(left: str, right: str) -> bool:
+    return normalize_whitespace(left) == normalize_whitespace(right)
+
+
 def correct_sentence(
     corrector: HuggingFaceSummarizer,
     sentence: str,
@@ -569,6 +573,11 @@ def build_corrected_record(
             fallback_reason = fallback_reason_code(failure_reason)
         elif not reason:
             reason = decision_reason
+
+        if action == ACTION_REPLACE and same_normalized_sentence(corrected_sentence, sentence):
+            action = ACTION_KEEP
+            corrected_sentence = sentence
+            reason = "Correction model returned the original sentence unchanged."
 
         count_action(stats, action)
         corrected_sentences.append(corrected_sentence or sentence)
