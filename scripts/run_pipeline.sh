@@ -11,7 +11,7 @@ set -euo pipefail
 #   RUN_NAME=main_500 \
 #   DOCUMENTS=data/processed/documents_main_500.jsonl \
 #   SUMMARIES=data/processed/generated_summaries.qwen2p5_1p5b.jsonl \
-#   RETRIEVAL_METHOD=rael \
+#   RETRIEVAL_METHOD=ariel \
 #   bash scripts/run_pipeline.sh
 
 CONFIG="${CONFIG:-}"
@@ -49,7 +49,7 @@ method_label() {
     bm25) echo "BM25 + NLI" ;;
     embedding) echo "Embedding + NLI" ;;
     hybrid) echo "Hybrid + NLI" ;;
-    rael) echo "RAEL + NLI" ;;
+    ariel) echo "ARIEL + NLI" ;;
     *) echo "$1 + NLI" ;;
   esac
 }
@@ -60,7 +60,7 @@ RUN_DIR="${RUN_DIR:-data/results/${RUN_NAME}}"
 DOCUMENTS="${DOCUMENTS:-data/processed/documents_debug_5.jsonl}"
 SUMMARIES="${SUMMARIES:-data/processed/summaries_debug_5.jsonl}"
 SUMMARY_FIELD="${SUMMARY_FIELD:-}"
-RETRIEVAL_METHOD="${RETRIEVAL_METHOD:-rael}"
+RETRIEVAL_METHOD="${RETRIEVAL_METHOD:-ariel}"
 
 RUN_SUMMARIZE="${RUN_SUMMARIZE:-0}"
 RUN_CORRECTION="${RUN_CORRECTION:-1}"
@@ -233,7 +233,7 @@ run_retrieval() {
         --device "${EMBEDDING_DEVICE}" \
         "${embedding_local_args[@]}"
       ;;
-    hybrid|rael)
+    hybrid|ariel)
       run_cmd "${PYTHON_BIN}" -m src.retrieval_bm25 \
         --chunks "${CHUNKS}" \
         --queries "${queries}" \
@@ -255,7 +255,7 @@ run_retrieval() {
           --alpha "${HYBRID_ALPHA}" \
           --top-k "${TOP_K}"
       else
-        run_cmd "${PYTHON_BIN}" -m src.retrieval_rael \
+        run_cmd "${PYTHON_BIN}" -m src.retrieval_ariel \
           --bm25 "${bm25_path}" \
           --embedding "${embedding_path}" \
           --output "${output}" \

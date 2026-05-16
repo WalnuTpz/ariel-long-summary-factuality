@@ -1,6 +1,6 @@
-"""Risk-aware adaptive evidence localization.
+"""Adaptive risk-informed evidence localization.
 
-RAEL classifies each summary sentence into a coarse risk type, uses that type
+ARIEL classifies each summary sentence into a coarse risk type, uses that type
 to choose a dynamic BM25/embedding fusion weight, and reranks candidate
 evidence with lightweight coverage features.
 """
@@ -132,7 +132,7 @@ RELATION_CUE_PATTERN = re.compile(
 
 
 @dataclass
-class RaelStats:
+class ArielStats:
     input_bm25_results: int = 0
     input_embedding_results: int = 0
     written_results: int = 0
@@ -523,7 +523,7 @@ def index_queries_by_query_id(queries: Iterable[dict[str, Any]]) -> dict[str, st
     return indexed
 
 
-def fuse_one_rael_result(
+def fuse_one_ariel_result(
     bm25_record: dict[str, Any],
     embedding_record: dict[str, Any],
     query_by_id: dict[str, str],
@@ -575,11 +575,11 @@ def fuse_one_rael_result(
                 enable_expansion=enable_expansion and enable_coverage,
             )
         )
-        rael_score = base_score + float(coverage_features["coverage_bonus"])
+        ariel_score = base_score + float(coverage_features["coverage_bonus"])
         chunk["text"] = evidence_text
         chunk.update(
             {
-                "score": round(rael_score, 6),
+                "score": round(ariel_score, 6),
                 "base_score": round(base_score, 6),
                 "bm25_score": round(float(bm25_chunks.get(chunk_id, {}).get("score", 0.0)), 6),
                 "embedding_score": round(
@@ -612,7 +612,7 @@ def fuse_one_rael_result(
         "query_id": bm25_record["query_id"],
         "doc_id": doc_id,
         "query": query_text,
-        "retrieval_method": "rael",
+        "retrieval_method": "ariel",
         "risk_type": risk_type,
         "alpha": alpha,
         "coverage_rerank": enable_coverage,
@@ -624,7 +624,7 @@ def fuse_one_rael_result(
     }
 
 
-def retrieve_rael(
+def retrieve_ariel(
     bm25_results: Iterable[dict[str, Any]],
     embedding_results: Iterable[dict[str, Any]],
     queries: Iterable[dict[str, Any]] | None = None,
@@ -635,7 +635,7 @@ def retrieve_rael(
     enable_coverage: bool = True,
     enable_expansion: bool = True,
     expansion_radius: int = DEFAULT_EXPANSION_RADIUS,
-) -> tuple[list[dict[str, Any]], RaelStats]:
+) -> tuple[list[dict[str, Any]], ArielStats]:
     if expansion_radius < 0:
         raise ValueError("expansion_radius must be non-negative.")
     alpha_by_risk = normalize_alpha_values(alpha_by_risk or DEFAULT_ALPHA_BY_RISK)
@@ -649,7 +649,7 @@ def retrieve_rael(
     embedding_records = list(embedding_results)
     embedding_by_query_id = index_by_query_id(embedding_records)
 
-    stats = RaelStats(
+    stats = ArielStats(
         input_bm25_results=len(bm25_records),
         input_embedding_results=len(embedding_records),
     )
@@ -662,7 +662,7 @@ def retrieve_rael(
             stats.missing_embedding_results += 1
             continue
 
-        fused_record = fuse_one_rael_result(
+        fused_record = fuse_one_ariel_result(
             bm25_record=bm25_record,
             embedding_record=embedding_record,
             query_by_id=query_by_id,
@@ -685,7 +685,7 @@ def retrieve_rael(
     return output, stats
 
 
-def retrieve_rael_jsonl(
+def retrieve_ariel_jsonl(
     bm25_path: str | Path,
     embedding_path: str | Path,
     output_path: str | Path,
@@ -697,10 +697,10 @@ def retrieve_rael_jsonl(
     enable_coverage: bool = True,
     enable_expansion: bool = True,
     expansion_radius: int = DEFAULT_EXPANSION_RADIUS,
-) -> RaelStats:
+) -> ArielStats:
     queries = iter_jsonl(queries_path) if queries_path else None
     chunks = iter_jsonl(chunks_path) if chunks_path else None
-    results, stats = retrieve_rael(
+    results, stats = retrieve_ariel(
         bm25_results=iter_jsonl(bm25_path),
         embedding_results=iter_jsonl(embedding_path),
         queries=queries,
@@ -727,11 +727,11 @@ def alpha_config_from_args(args: argparse.Namespace) -> dict[str, float]:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run RAEL retrieval fusion with coverage reranking."
+        description="Run ARIEL retrieval fusion with coverage reranking."
     )
     parser.add_argument("--bm25", required=True, help="BM25 retrieval JSONL path.")
     parser.add_argument("--embedding", required=True, help="Embedding retrieval JSONL path.")
-    parser.add_argument("--output", required=True, help="RAEL retrieval JSONL output path.")
+    parser.add_argument("--output", required=True, help="ARIEL retrieval JSONL output path.")
     parser.add_argument(
         "--queries",
         default=None,
@@ -788,7 +788,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    stats = retrieve_rael_jsonl(
+    stats = retrieve_ariel_jsonl(
         bm25_path=args.bm25,
         embedding_path=args.embedding,
         output_path=args.output,

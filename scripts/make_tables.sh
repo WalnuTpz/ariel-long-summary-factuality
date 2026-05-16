@@ -6,14 +6,14 @@ set -euo pipefail
 # Typical usage after running scripts/run_pipeline.sh:
 #   PYTHON=.venv/bin/python \
 #   RUN_DIR=data/results/main_500 \
-#   PRIMARY_METHOD=rael \
+#   PRIMARY_METHOD=ariel \
 #   bash scripts/make_tables.sh
 #
 # Typical usage after running scripts/run_compare_retrieval.sh:
 #   PYTHON=.venv/bin/python \
 #   RUN_DIR=data/results/main_500_compare \
-#   CORRECTION_RUN_DIR=data/results/main_500_rael \
-#   PRIMARY_METHOD=rael \
+#   CORRECTION_RUN_DIR=data/results/main_500_ariel \
+#   PRIMARY_METHOD=ariel \
 #   bash scripts/make_tables.sh
 
 CONFIG="${CONFIG:-}"
@@ -29,7 +29,7 @@ fi
 PYTHON_BIN="${PYTHON:-python3}"
 RUN_DIR="${RUN_DIR:-data/results/debug_retrieval_compare}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/tables/$(basename "${RUN_DIR}")}"
-PRIMARY_METHOD="${PRIMARY_METHOD:-rael}"
+PRIMARY_METHOD="${PRIMARY_METHOD:-ariel}"
 CORRECTION_RUN_DIR="${CORRECTION_RUN_DIR:-}"
 CORRECTION_METHOD="${CORRECTION_METHOD:-${PRIMARY_METHOD}}"
 DOCUMENTS="${DOCUMENTS:-}"
@@ -58,10 +58,10 @@ METHOD_LABELS = {
     "bm25": "BM25 + NLI",
     "embedding": "Embedding + NLI",
     "hybrid": "Fixed Hybrid + NLI",
-    "rael": "RAEL + NLI",
-    "rael_no_coverage": "RAEL w/o coverage rerank",
-    "rael_no_expansion": "RAEL w/o adaptive expansion",
-    "rael_no_risk_weighting": "RAEL w/o risk-adaptive weighting",
+    "ariel": "ARIEL + NLI",
+    "ariel_no_coverage": "ARIEL w/o coverage rerank",
+    "ariel_no_expansion": "ARIEL w/o adaptive expansion",
+    "ariel_no_risk_weighting": "ARIEL w/o risk-adaptive weighting",
 }
 
 VERSION_LABELS = {
@@ -118,8 +118,8 @@ def load_summaries(run_dir: Path) -> dict[str, dict[str, Any]]:
 def choose_primary_method(summaries: dict[str, dict[str, Any]], preferred: str) -> str | None:
     if preferred in summaries:
         return preferred
-    if "rael" in summaries:
-        return "rael"
+    if "ariel" in summaries:
+        return "ariel"
     if summaries:
         return sorted(summaries)[0]
     return None
@@ -221,10 +221,10 @@ def retrieval_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
         "bm25",
         "embedding",
         "hybrid",
-        "rael",
-        "rael_no_coverage",
-        "rael_no_expansion",
-        "rael_no_risk_weighting",
+        "ariel",
+        "ariel_no_coverage",
+        "ariel_no_expansion",
+        "ariel_no_risk_weighting",
     ]
     methods = [method for method in preferred if method in summaries]
     methods.extend(method for method in sorted(summaries) if method not in methods)
@@ -248,9 +248,9 @@ def retrieval_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
     return rows
 
 
-def rael_ablation_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
+def ariel_ablation_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
     rows = []
-    for method in ["rael_no_risk_weighting", "rael_no_coverage", "rael_no_expansion", "rael"]:
+    for method in ["ariel_no_risk_weighting", "ariel_no_coverage", "ariel_no_expansion", "ariel"]:
         if method not in summaries:
             continue
         before = get_version(summaries[method], "before_correction")
@@ -419,8 +419,8 @@ def main() -> None:
 
     sections.append(
         write_table(
-            "table_4_rael_ablation.md",
-            "表 4：RAEL 消融实验",
+            "table_4_ariel_ablation.md",
+            "表 4：ARIEL 消融实验",
             [
                 "方法",
                 "Supported Ratio",
@@ -428,7 +428,7 @@ def main() -> None:
                 "平均风险句数",
                 "ROUGE-L",
             ],
-            rael_ablation_rows(summaries),
+            ariel_ablation_rows(summaries),
             ["left", "right", "right", "right", "right"],
         )
     )

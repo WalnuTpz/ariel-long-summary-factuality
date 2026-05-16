@@ -12,7 +12,7 @@ Current batch:
   document chunks.
 - `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
   normalized scores.
-- `retrieval_rael.py`: risk-aware adaptive evidence localization with
+- `retrieval_ariel.py`: adaptive risk-informed evidence localization with
   sentence risk classification, dynamic BM25/embedding fusion, and coverage
   reranking plus adaptive adjacent-context expansion.
 - `summarize.py`: generate long-document summaries with a local HuggingFace
