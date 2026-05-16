@@ -61,6 +61,7 @@ METHOD_LABELS = {
     "rael": "RAEL + NLI",
     "rael_no_coverage": "RAEL w/o coverage rerank",
     "rael_no_expansion": "RAEL w/o adaptive expansion",
+    "rael_no_risk_weighting": "RAEL w/o risk-adaptive weighting",
 }
 
 VERSION_LABELS = {
@@ -216,7 +217,15 @@ def main_metrics_rows(summary: dict[str, Any], primary_method: str, documents: P
 
 
 def retrieval_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
-    preferred = ["bm25", "embedding", "hybrid", "rael", "rael_no_coverage", "rael_no_expansion"]
+    preferred = [
+        "bm25",
+        "embedding",
+        "hybrid",
+        "rael",
+        "rael_no_coverage",
+        "rael_no_expansion",
+        "rael_no_risk_weighting",
+    ]
     methods = [method for method in preferred if method in summaries]
     methods.extend(method for method in sorted(summaries) if method not in methods)
     rows = []
@@ -241,7 +250,7 @@ def retrieval_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
 
 def rael_ablation_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]:
     rows = []
-    for method in ["rael_no_coverage", "rael_no_expansion", "rael"]:
+    for method in ["rael_no_risk_weighting", "rael_no_coverage", "rael_no_expansion", "rael"]:
         if method not in summaries:
             continue
         before = get_version(summaries[method], "before_correction")

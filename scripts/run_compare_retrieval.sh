@@ -51,13 +51,14 @@ method_label() {
     rael) echo "RAEL + NLI" ;;
     rael_no_coverage) echo "RAEL w/o coverage + NLI" ;;
     rael_no_expansion) echo "RAEL w/o adaptive expansion + NLI" ;;
+    rael_no_risk_weighting) echo "RAEL w/o risk-adaptive weighting + NLI" ;;
     *) echo "$1 + NLI" ;;
   esac
 }
 
 retrieval_method_name() {
   case "$1" in
-    rael_no_coverage|rael_no_expansion) echo "rael" ;;
+    rael_no_coverage|rael_no_expansion|rael_no_risk_weighting) echo "rael" ;;
     *) echo "$1" ;;
   esac
 }
@@ -68,7 +69,7 @@ RUN_DIR="${RUN_DIR:-data/results/${RUN_NAME}}"
 DOCUMENTS="${DOCUMENTS:-data/processed/documents_debug_5.jsonl}"
 SUMMARIES="${SUMMARIES:-data/processed/summaries_debug_5.jsonl}"
 SUMMARY_FIELD="${SUMMARY_FIELD:-}"
-METHODS="${METHODS:-bm25 embedding hybrid rael rael_no_coverage rael_no_expansion}"
+METHODS="${METHODS:-bm25 embedding hybrid rael rael_no_coverage rael_no_expansion rael_no_risk_weighting}"
 
 FORCE="${FORCE:-1}"
 TOP_K="${TOP_K:-3}"
@@ -130,6 +131,7 @@ HYBRID_RETRIEVAL="${RUN_DIR}/retrieval.hybrid.jsonl"
 RAEL_RETRIEVAL="${RUN_DIR}/retrieval.rael.jsonl"
 RAEL_NO_COVERAGE_RETRIEVAL="${RUN_DIR}/retrieval.rael_no_coverage.jsonl"
 RAEL_NO_EXPANSION_RETRIEVAL="${RUN_DIR}/retrieval.rael_no_expansion.jsonl"
+RAEL_NO_RISK_WEIGHTING_RETRIEVAL="${RUN_DIR}/retrieval.rael_no_risk_weighting.jsonl"
 COMPARISON_TSV="${RUN_DIR}/comparison.tsv"
 COMPARISON_MD="${RUN_DIR}/comparison.md"
 
@@ -195,6 +197,18 @@ run_cmd "${PYTHON_BIN}" -m src.retrieval_rael \
   --top-k "${TOP_K}" \
   --disable-adaptive-expansion
 
+run_cmd "${PYTHON_BIN}" -m src.retrieval_rael \
+  --bm25 "${BM25_RETRIEVAL}" \
+  --embedding "${EMBEDDING_RETRIEVAL}" \
+  --output "${RAEL_NO_RISK_WEIGHTING_RETRIEVAL}" \
+  --queries "${SENTENCES}" \
+  --chunks "${CHUNKS}" \
+  --top-k "${TOP_K}" \
+  --number-date-alpha "${HYBRID_ALPHA}" \
+  --entity-alpha "${HYBRID_ALPHA}" \
+  --relation-alpha "${HYBRID_ALPHA}" \
+  --general-alpha "${HYBRID_ALPHA}"
+
 retrieval_path_for_method() {
   case "$1" in
     bm25) echo "${BM25_RETRIEVAL}" ;;
@@ -203,6 +217,7 @@ retrieval_path_for_method() {
     rael) echo "${RAEL_RETRIEVAL}" ;;
     rael_no_coverage) echo "${RAEL_NO_COVERAGE_RETRIEVAL}" ;;
     rael_no_expansion) echo "${RAEL_NO_EXPANSION_RETRIEVAL}" ;;
+    rael_no_risk_weighting) echo "${RAEL_NO_RISK_WEIGHTING_RETRIEVAL}" ;;
     *)
       echo "unsupported method: $1" >&2
       exit 1
