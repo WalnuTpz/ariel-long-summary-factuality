@@ -36,8 +36,10 @@ SUMMARY_TEXT_KEYS = (
 REFERENCE_TEXT_KEYS = ("reference_summary", "abstract", "target", "summary")
 BEFORE_VERSION = "before_correction"
 AFTER_VERSION = "after_correction"
-SHORT_MAX_WORDS = 200
-MEDIUM_MAX_WORDS = 350
+SHORT_MAX_WORDS = 150
+MEDIUM_MAX_WORDS = 225
+LENGTH_BUCKETS = ("short", "medium", "long")
+DEFAULT_LENGTH_BUCKET_STRATEGY = "fixed"
 
 
 @dataclass
@@ -207,12 +209,49 @@ def compute_rouge(candidate: str, reference: str) -> dict[str, float | None]:
     }
 
 
-def length_bucket(word_count: int, short_max_words: int, medium_max_words: int) -> str:
+def fixed_length_bucket(word_count: int, short_max_words: int, medium_max_words: int) -> str:
     if word_count <= short_max_words:
         return "short"
     if word_count <= medium_max_words:
         return "medium"
     return "long"
+
+
+def tertile_length_buckets(
+    summaries: dict[tuple[str, str], dict[str, Any]]
+) -> dict[tuple[str, str], str]:
+    keyed_lengths = [
+        (key, len(simple_tokenize(summary.get("summary", ""))))
+        for key, summary in summaries.items()
+    ]
+    keyed_lengths.sort(key=lambda item: (item[1], item[0][0], item[0][1]))
+    total = len(keyed_lengths)
+    if total == 0:
+        return {}
+
+    bucket_by_key: dict[tuple[str, str], str] = {}
+    for rank, (key, _) in enumerate(keyed_lengths):
+        bucket_index = min(len(LENGTH_BUCKETS) - 1, rank * len(LENGTH_BUCKETS) // total)
+        bucket_by_key[key] = LENGTH_BUCKETS[bucket_index]
+    return bucket_by_key
+
+
+def length_buckets_by_key(
+    summaries: dict[tuple[str, str], dict[str, Any]],
+    strategy: str,
+    short_max_words: int,
+    medium_max_words: int,
+) -> dict[tuple[str, str], str]:
+    if strategy == "tertile":
+        return tertile_length_buckets(summaries)
+    return {
+        key: fixed_length_bucket(
+            len(simple_tokenize(summary.get("summary", ""))),
+            short_max_words=short_max_words,
+            medium_max_words=medium_max_words,
+        )
+        for key, summary in summaries.items()
+    }
 
 
 def load_verification_metrics(
@@ -278,8 +317,8 @@ def make_eval_record(
     summary_text: str,
     summary_version: str,
     factuality: dict[str, Any] | None,
-    short_max_words: int,
-    medium_max_words: int,
+    length_bucket_name: str,
+    length_bucket_strategy: str,
     correction_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reference = base_summary.get("reference_summary", "")
@@ -293,11 +332,8 @@ def make_eval_record(
         "unsupported_or_nei_ratio": None,
         "summary_word_count": word_count,
         "reference_word_count": len(simple_tokenize(reference)) if reference else None,
-        "length_bucket": length_bucket(
-            word_count,
-            short_max_words=short_max_words,
-            medium_max_words=medium_max_words,
-        ),
+        "length_bucket": length_bucket_name,
+        "length_bucket_strategy": length_bucket_strategy,
         "model": base_summary.get("model", ""),
         "generation_method": base_summary.get("generation_method", ""),
         "reference_available": bool(reference),
@@ -325,14 +361,22 @@ def evaluate_records(
     verification_after: tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]]],
     short_max_words: int,
     medium_max_words: int,
+    length_bucket_strategy: str,
 ) -> tuple[list[dict[str, Any]], int, int]:
     before_by_key, before_by_doc = verification_before
     after_by_key, after_by_doc = verification_after
     records: list[dict[str, Any]] = []
     without_reference = 0
     without_verification = 0
+    bucket_by_key = length_buckets_by_key(
+        summaries=summaries,
+        strategy=length_bucket_strategy,
+        short_max_words=short_max_words,
+        medium_max_words=medium_max_words,
+    )
 
     for key, base_summary in summaries.items():
+        length_bucket_name = bucket_by_key.get(key, "medium")
         before_factuality = lookup_factuality(key, before_by_key, before_by_doc)
         if before_factuality is None:
             without_verification += 1
@@ -344,8 +388,8 @@ def evaluate_records(
                 summary_text=base_summary["summary"],
                 summary_version=BEFORE_VERSION,
                 factuality=before_factuality,
-                short_max_words=short_max_words,
-                medium_max_words=medium_max_words,
+                length_bucket_name=length_bucket_name,
+                length_bucket_strategy=length_bucket_strategy,
             )
         )
 
@@ -362,8 +406,8 @@ def evaluate_records(
                 summary_text=corrected_summary,
                 summary_version=AFTER_VERSION,
                 factuality=after_factuality,
-                short_max_words=short_max_words,
-                medium_max_words=medium_max_words,
+                length_bucket_name=length_bucket_name,
+                length_bucket_strategy=length_bucket_strategy,
                 correction_record=correction_record,
             )
         )
@@ -458,6 +502,7 @@ def evaluate_summary_jsonl(
     summary_field: str | None = None,
     short_max_words: int = SHORT_MAX_WORDS,
     medium_max_words: int = MEDIUM_MAX_WORDS,
+    length_bucket_strategy: str = DEFAULT_LENGTH_BUCKET_STRATEGY,
 ) -> EvaluateStats:
     documents_by_doc_id, document_count = index_documents(documents_path)
     summaries, stats = load_summaries(
@@ -486,6 +531,7 @@ def evaluate_summary_jsonl(
         verification_after=(after_by_key, after_by_doc),
         short_max_words=short_max_words,
         medium_max_words=medium_max_words,
+        length_bucket_strategy=length_bucket_strategy,
     )
     stats.records_without_reference = missing_reference
     stats.records_without_verification = missing_verification
@@ -534,16 +580,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Summary field to evaluate. Defaults to generated_summary first.",
     )
     parser.add_argument(
+        "--length-bucket-strategy",
+        choices=["tertile", "fixed"],
+        default=DEFAULT_LENGTH_BUCKET_STRATEGY,
+        help="How to assign short/medium/long buckets. Defaults to fixed thresholds.",
+    )
+    parser.add_argument(
         "--short-max-words",
         type=int,
         default=SHORT_MAX_WORDS,
-        help="Maximum word count for the short summary bucket.",
+        help="Maximum word count for the short summary bucket when using fixed buckets.",
     )
     parser.add_argument(
         "--medium-max-words",
         type=int,
         default=MEDIUM_MAX_WORDS,
-        help="Maximum word count for the medium summary bucket.",
+        help="Maximum word count for the medium summary bucket when using fixed buckets.",
     )
     return parser
 
@@ -561,6 +613,7 @@ def main() -> None:
         summary_field=args.summary_field,
         short_max_words=args.short_max_words,
         medium_max_words=args.medium_max_words,
+        length_bucket_strategy=args.length_bucket_strategy,
     )
     for key, value in stats.to_dict().items():
         print(f"{key}: {value}")

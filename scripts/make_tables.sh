@@ -71,6 +71,8 @@ BUCKET_LABELS = {
     "medium": "Medium",
     "long": "Long",
 }
+SHORT_MAX_WORDS = 150
+MEDIUM_MAX_WORDS = 225
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -151,6 +153,20 @@ def format_percent(value: Any, digits: int = 1) -> str:
         return f"{float(value) * 100:.{digits}f}%"
     except (TypeError, ValueError):
         return str(value)
+
+
+def mean(values: list[Any]) -> float | None:
+    clean_values = []
+    for value in values:
+        if value is None:
+            continue
+        try:
+            clean_values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if not clean_values:
+        return None
+    return sum(clean_values) / len(clean_values)
 
 
 def metric(summary: dict[str, Any], version: str, key: str) -> Any:
@@ -263,7 +279,67 @@ def ariel_ablation_rows(summaries: dict[str, dict[str, Any]]) -> list[list[str]]
     return rows
 
 
-def length_bucket_rows(summary: dict[str, Any]) -> list[list[str]]:
+def summarize_eval_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "count": len(records),
+        "summary_word_count": mean([record.get("summary_word_count") for record in records]),
+        "rouge1": mean([record.get("rouge1") for record in records]),
+        "rouge2": mean([record.get("rouge2") for record in records]),
+        "rougeL": mean([record.get("rougeL") for record in records]),
+        "supported_ratio": mean([record.get("supported_ratio") for record in records]),
+        "unsupported_or_nei_ratio": mean(
+            [record.get("unsupported_or_nei_ratio") for record in records]
+        ),
+    }
+
+
+def threshold_bucket(word_count: float) -> str:
+    if word_count <= SHORT_MAX_WORDS:
+        return "short"
+    if word_count <= MEDIUM_MAX_WORDS:
+        return "medium"
+    return "long"
+
+
+def threshold_length_bucket_rows(records: list[dict[str, Any]]) -> list[list[str]]:
+    before_records = [
+        record
+        for record in records
+        if record.get("summary_version") == "before_correction"
+        and record.get("summary_word_count") is not None
+    ]
+    if not before_records:
+        return []
+
+    grouped: dict[str, list[dict[str, Any]]] = {bucket: [] for bucket in ["short", "medium", "long"]}
+    for record in before_records:
+        bucket = threshold_bucket(float(record.get("summary_word_count") or 0))
+        grouped[bucket].append(record)
+
+    rows = []
+    for bucket in ["short", "medium", "long"]:
+        summary = summarize_eval_records(grouped[bucket])
+        rows.append(
+            [
+                BUCKET_LABELS.get(bucket, bucket),
+                format_int(summary.get("count")),
+                format_float(summary.get("summary_word_count"), digits=1),
+                format_float(summary.get("rouge1")),
+                format_float(summary.get("rouge2")),
+                format_float(summary.get("rougeL")),
+                format_percent(summary.get("supported_ratio")),
+                format_percent(summary.get("unsupported_or_nei_ratio")),
+            ]
+        )
+    return rows
+
+
+def length_bucket_rows(summary: dict[str, Any], records: list[dict[str, Any]] | None = None) -> list[list[str]]:
+    if records:
+        threshold_rows = threshold_length_bucket_rows(records)
+        if threshold_rows:
+            return threshold_rows
+
     rows = []
     buckets = summary.get("by_length_bucket", {})
     for bucket in ["short", "medium", "long"]:
@@ -325,6 +401,7 @@ def notes(
         "- Supported Ratio 和 Unsupported/NEI Ratio 基于句子级 NLI 结果统计。",
         "- Error Reduction Rate = (Risk_before - Risk_after) / Risk_before。",
         "- Length Ratio = corrected summary word count / original summary word count。",
+        f"- 表 2 按原始生成摘要长度分桶：Short <= {SHORT_MAX_WORDS} 词，Medium <= {MEDIUM_MAX_WORDS} 词，Long > {MEDIUM_MAX_WORDS} 词。",
     ]
     if primary_method:
         lines.append(f"- 主方法表默认使用 `{METHOD_LABELS.get(primary_method, primary_method)}`。")
@@ -342,6 +419,11 @@ def main() -> None:
     summaries = load_summaries(RUN_DIR)
     primary_method = choose_primary_method(summaries, PRIMARY_METHOD)
     primary_summary = summaries.get(primary_method, {}) if primary_method else {}
+    primary_records = (
+        read_jsonl(RUN_DIR / f"evaluation.{primary_method}.jsonl")
+        if primary_method
+        else []
+    )
     correction_summaries = load_summaries(CORRECTION_RUN_DIR) if CORRECTION_RUN_DIR else {}
     correction_method = (
         choose_primary_method(correction_summaries, CORRECTION_METHOD)
@@ -390,7 +472,7 @@ def main() -> None:
                 "Supported Ratio",
                 "Unsupported/NEI Ratio",
             ],
-            length_bucket_rows(primary_summary) if primary_summary else [],
+            length_bucket_rows(primary_summary, primary_records) if primary_summary else [],
             ["left", "right", "right", "right", "right", "right", "right", "right"],
         )
     )
