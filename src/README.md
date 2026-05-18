@@ -2,7 +2,7 @@
 
 This directory contains the project implementation.
 
-Current batch:
+Current modules:
 
 - `utils.py`: dependency-free JSONL, text, and normalization helpers.
 - `load_data.py`: normalize raw JSONL data into the project document schema.
@@ -13,8 +13,8 @@ Current batch:
 - `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
   normalized scores.
 - `retrieval_ariel.py`: adaptive risk-informed evidence localization with
-  sentence risk classification, dynamic BM25/embedding fusion, and coverage
-  reranking plus adaptive adjacent-context expansion.
+  sentence risk classification, risk-adaptive BM25/embedding fusion,
+  coverage-aware reranking, and adaptive adjacent-context expansion.
 - `summarize.py`: generate long-document summaries with a local HuggingFace
   causal language model using section summaries plus final summary merging.
 - `split_summary_sentences.py`: split generated summaries into sentence-level
@@ -27,11 +27,11 @@ Current batch:
   `facebook/bart-large-mnli`.
 - `correct_local.py`: perform evidence-conditioned local rewrite for
   Unsupported summary sentences and high-confidence Not Enough Information
-  sentences, then reconstruct the corrected summary.
+  sentences, then reconstruct the corrected summary. It records `replace`
+  only when the corrected sentence actually changes; otherwise it records
+  `keep` with a reason.
 - `evaluate_summary.py`: compute dependency-free ROUGE-1/2/L, sentence-level
   factuality ratios, length ratios, error reduction, and length-bucket
   aggregate statistics.
 - `export_cases.py`: export representative success/failure factuality and
   correction cases as JSONL and Markdown for the report and slides.
-
-Planned modules:

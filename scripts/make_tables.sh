@@ -4,15 +4,12 @@ set -euo pipefail
 # Generate paper-ready Markdown tables from evaluation outputs.
 #
 # Typical usage after running scripts/run_pipeline.sh:
-#   PYTHON=.venv/bin/python \
-#   RUN_DIR=data/results/main_500 \
-#   PRIMARY_METHOD=ariel \
-#   bash scripts/make_tables.sh
+#   CONFIG=configs/main_600_tables_gpu.env bash scripts/make_tables.sh
 #
 # Typical usage after running scripts/run_compare_retrieval.sh:
 #   PYTHON=.venv/bin/python \
-#   RUN_DIR=data/results/main_500_compare \
-#   CORRECTION_RUN_DIR=data/results/main_500_ariel \
+#   RUN_DIR=data/results/main_600_compare_gpu \
+#   CORRECTION_RUN_DIR=data/results/main_600_ariel_gpu \
 #   PRIMARY_METHOD=ariel \
 #   bash scripts/make_tables.sh
 

@@ -7,12 +7,7 @@ set -euo pipefail
 #   PYTHON=.venv/bin/python RUN_NAME=debug_5 bash scripts/run_pipeline.sh
 #
 # Typical main run:
-#   PYTHON=.venv/bin/python \
-#   RUN_NAME=main_500 \
-#   DOCUMENTS=data/processed/documents_main_500.jsonl \
-#   SUMMARIES=data/processed/generated_summaries.qwen2p5_1p5b.jsonl \
-#   RETRIEVAL_METHOD=ariel \
-#   bash scripts/run_pipeline.sh
+#   CONFIG=configs/main_600_pipeline_gpu.env bash scripts/run_pipeline.sh
 
 CONFIG="${CONFIG:-}"
 if [[ -n "${CONFIG}" ]]; then
