@@ -13,8 +13,10 @@ Current modules:
 - `retrieval_hybrid.py`: fuse BM25 and embedding retrieval with min-max
   normalized scores.
 - `retrieval_ariel.py`: adaptive risk-informed evidence localization with
-  sentence risk classification, risk-adaptive BM25/embedding fusion,
-  coverage-aware reranking, and adaptive adjacent-context expansion.
+  sentence risk classification, lightweight risk-guided BM25/embedding
+  fusion, coverage-aware reranking, and adaptive adjacent-context expansion.
+  The final analysis treats coverage reranking and expansion as the primary
+  contributors, with risk weighting as an auxiliary signal.
 - `summarize.py`: generate long-document summaries with a local HuggingFace
   causal language model using section summaries plus final summary merging.
 - `split_summary_sentences.py`: split generated summaries into sentence-level
@@ -31,7 +33,7 @@ Current modules:
   only when the corrected sentence actually changes; otherwise it records
   `keep` with a reason.
 - `evaluate_summary.py`: compute dependency-free ROUGE-1/2/L, sentence-level
-  factuality ratios, length ratios, error reduction, and length-bucket
-  aggregate statistics.
+  automatic NLI factuality estimates, length ratios, error reduction, and
+  length-bucket aggregate statistics.
 - `export_cases.py`: export representative success/failure factuality and
   correction cases as JSONL and Markdown for the report and slides.

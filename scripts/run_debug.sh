@@ -9,7 +9,7 @@ required_dirs=(
   "data/results"
   "src"
   "scripts"
-  "report"
+  "docs"
 )
 
 for dir in "${required_dirs[@]}"; do
@@ -24,7 +24,7 @@ hybrid_path="/tmp/long_summary_factuality_debug_hybrid.jsonl"
 verification_inputs_path="/tmp/long_summary_factuality_debug_verification_inputs.jsonl"
 
 "${PYTHON_BIN}" -m src.load_data \
-  --input examples/debug_documents.jsonl \
+  --input data/raw/govreport_debug_5.jsonl \
   --output "${documents_path}" \
   --min-document-chars 100
 
@@ -36,13 +36,13 @@ verification_inputs_path="/tmp/long_summary_factuality_debug_verification_inputs
 
 "${PYTHON_BIN}" -m src.retrieval_bm25 \
   --chunks "${chunks_path}" \
-  --queries examples/debug_summary_sentences.jsonl \
+  --queries data/processed/summary_sentences_debug_5.jsonl \
   --output "${retrieval_path}" \
   --top-k 2
 
 "${PYTHON_BIN}" -m src.retrieval_embedding \
   --chunks "${chunks_path}" \
-  --queries examples/debug_summary_sentences.jsonl \
+  --queries data/processed/summary_sentences_debug_5.jsonl \
   --output "${embedding_path}" \
   --top-k 2 \
   --device cpu \
@@ -56,7 +56,7 @@ verification_inputs_path="/tmp/long_summary_factuality_debug_verification_inputs
   --top-k 2
 
 "${PYTHON_BIN}" -m src.verification_schema \
-  --sentences examples/debug_summary_sentences.jsonl \
+  --sentences data/processed/summary_sentences_debug_5.jsonl \
   --retrieval "${hybrid_path}" \
   --output "${verification_inputs_path}" \
   --method "Hybrid + NLI" \
