@@ -103,7 +103,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--run-root",
-        default="data/results/controlled_length_100_gpu",
+        default="data/results/controlled_length_100_wide_gpu",
         help="Directory containing one subdirectory per length setting.",
     )
     parser.add_argument(
@@ -114,12 +114,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-markdown",
-        default="outputs/tables/controlled_length_100_gpu/controlled_length.md",
+        default="outputs/tables/controlled_length_100_wide_gpu/controlled_length.md",
         help="Markdown table output path.",
     )
     parser.add_argument(
         "--output-json",
-        default="outputs/tables/controlled_length_100_gpu/controlled_length.json",
+        default="outputs/tables/controlled_length_100_wide_gpu/controlled_length.json",
         help="JSON rows output path.",
     )
     args = parser.parse_args()

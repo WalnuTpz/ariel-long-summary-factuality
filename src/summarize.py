@@ -47,6 +47,30 @@ class SummarizeStats:
         return asdict(self)
 
 
+def target_word_range(target_words: int, tolerance: float) -> tuple[int, int] | None:
+    if tolerance <= 0:
+        return None
+    lower = max(1, int(round(target_words * (1 - tolerance))))
+    upper = max(lower, int(round(target_words * (1 + tolerance))))
+    return lower, upper
+
+
+def length_instruction(target_words: int, tolerance: float) -> str:
+    word_range = target_word_range(target_words, tolerance)
+    if word_range is None:
+        return f"about {target_words} words"
+    lower, upper = word_range
+    return f"between {lower} and {upper} words"
+
+
+def length_rule(target_words: int, tolerance: float) -> str:
+    word_range = target_word_range(target_words, tolerance)
+    if word_range is None:
+        return ""
+    lower, upper = word_range
+    return f"- Keep the output between {lower} and {upper} words.\n"
+
+
 def clean_generated_text(text: str) -> str:
     text = normalize_whitespace(text)
     text = re.sub(r"^\s*(#+\s*)?(final\s+)?summary\s*[:\-]\s*", "", text, flags=re.I)
@@ -70,14 +94,24 @@ def resolve_doc_id(item: dict[str, Any]) -> str:
     return str(first_present(item, DOC_ID_KEYS) or "").strip()
 
 
-def chunk_prompt(title: str, section_text: str, target_words: int) -> str:
+def chunk_prompt(
+    title: str,
+    section_text: str,
+    target_words: int,
+    target_word_tolerance: float,
+) -> str:
     title_line = f"Title: {title}\n\n" if title else ""
-    section_words = max(120, min(180, target_words // 2))
+    if target_word_tolerance > 0:
+        section_words = max(50, min(300, target_words // 2))
+    else:
+        section_words = max(120, min(180, target_words // 2))
     return (
-        f"Summarize this report excerpt in about {section_words} words.\n\n"
+        "Summarize this report excerpt in "
+        f"{length_instruction(section_words, target_word_tolerance)}.\n\n"
         "Rules:\n"
         "- Use only facts stated in the excerpt.\n"
         "- Keep key entities, dates, numbers, findings, and recommendations.\n"
+        f"{length_rule(section_words, target_word_tolerance)}"
         f"{PLAIN_OUTPUT_RULES}\n\n"
         f"{title_line}"
         "Excerpt:\n"
@@ -85,13 +119,20 @@ def chunk_prompt(title: str, section_text: str, target_words: int) -> str:
     )
 
 
-def single_pass_prompt(title: str, document: str, target_words: int) -> str:
+def single_pass_prompt(
+    title: str,
+    document: str,
+    target_words: int,
+    target_word_tolerance: float,
+) -> str:
     title_line = f"Title: {title}\n\n" if title else ""
     return (
-        f"Summarize the government report in about {target_words} words.\n\n"
+        "Summarize the government report in "
+        f"{length_instruction(target_words, target_word_tolerance)}.\n\n"
         "Rules:\n"
         "- Use only facts stated in the report.\n"
         "- Keep key entities, dates, numbers, findings, and recommendations.\n"
+        f"{length_rule(target_words, target_word_tolerance)}"
         f"{PLAIN_OUTPUT_RULES}\n\n"
         f"{title_line}"
         "Report:\n"
@@ -99,15 +140,21 @@ def single_pass_prompt(title: str, document: str, target_words: int) -> str:
     )
 
 
-def final_prompt(title: str, summary_source: str, target_words: int) -> str:
+def final_prompt(
+    title: str,
+    summary_source: str,
+    target_words: int,
+    target_word_tolerance: float,
+) -> str:
     title_line = f"Title: {title}\n\n" if title else ""
     return (
-        "Merge the intermediate summaries into one factual summary in about "
-        f"{target_words} words.\n\n"
+        "Merge the intermediate summaries into one factual summary in "
+        f"{length_instruction(target_words, target_word_tolerance)}.\n\n"
         "Rules:\n"
         "- Remove repetition.\n"
         "- Use only facts supported by the intermediate summaries.\n"
         "- Do not mention sections or intermediate summaries.\n"
+        f"{length_rule(target_words, target_word_tolerance)}"
         f"{PLAIN_OUTPUT_RULES}\n\n"
         f"{title_line}"
         "Intermediate summaries:\n"
@@ -260,6 +307,7 @@ def summarize_document(
     chunk_max_new_tokens: int,
     final_max_new_tokens: int,
     target_words: int,
+    target_word_tolerance: float,
     summary_id_suffix: str | None,
     save_chunk_summaries: bool,
 ) -> dict[str, Any]:
@@ -277,7 +325,12 @@ def summarize_document(
 
     if len(chunks) == 1:
         generated_summary = summarizer.generate(
-            single_pass_prompt(title=title, document=chunks[0], target_words=target_words),
+            single_pass_prompt(
+                title=title,
+                document=chunks[0],
+                target_words=target_words,
+                target_word_tolerance=target_word_tolerance,
+            ),
             max_new_tokens=final_max_new_tokens,
         )
         generation_method = "single_pass"
@@ -287,6 +340,7 @@ def summarize_document(
                 title=title,
                 section_text=chunk_text,
                 target_words=target_words,
+                target_word_tolerance=target_word_tolerance,
             )
             chunk_summary = summarizer.generate(prompt, max_new_tokens=chunk_max_new_tokens)
             if chunk_summary:
@@ -298,6 +352,7 @@ def summarize_document(
                 title=title,
                 summary_source="\n\n".join(chunk_summaries),
                 target_words=target_words,
+                target_word_tolerance=target_word_tolerance,
             ),
             max_new_tokens=final_max_new_tokens,
         )
@@ -311,6 +366,7 @@ def summarize_document(
         "input_model_tokens": summarizer.count_tokens(document),
         "input_document_word_count": len(simple_tokenize(document)),
         "target_words": target_words,
+        "target_word_tolerance": target_word_tolerance,
         "chunk_input_tokens": chunk_input_tokens,
         "chunk_overlap_tokens": chunk_overlap_tokens,
     }
@@ -368,6 +424,7 @@ def summarize_jsonl(
     chunk_max_new_tokens: int,
     final_max_new_tokens: int,
     target_words: int,
+    target_word_tolerance: float,
     summary_id_suffix: str | None,
     save_chunk_summaries: bool,
     limit: int | None,
@@ -418,6 +475,7 @@ def summarize_jsonl(
                     chunk_max_new_tokens=chunk_max_new_tokens,
                     final_max_new_tokens=final_max_new_tokens,
                     target_words=target_words,
+                    target_word_tolerance=target_word_tolerance,
                     summary_id_suffix=summary_id_suffix,
                     save_chunk_summaries=save_chunk_summaries,
                 )
@@ -494,6 +552,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Approximate target length of the final summary.",
     )
     parser.add_argument(
+        "--target-word-tolerance",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional relative word-count tolerance used to write an explicit "
+            "target range in prompts. For example, 0.15 requests 85%-115% of "
+            "the target word count. The default keeps the original about-X "
+            "prompt wording."
+        ),
+    )
+    parser.add_argument(
         "--local-files-only",
         action="store_true",
         help="Load model/tokenizer only from local HuggingFace cache or local path.",
@@ -568,6 +637,7 @@ def main() -> None:
         chunk_max_new_tokens=args.chunk_max_new_tokens,
         final_max_new_tokens=args.final_max_new_tokens,
         target_words=args.target_words,
+        target_word_tolerance=args.target_word_tolerance,
         summary_id_suffix=args.summary_id_suffix,
         save_chunk_summaries=args.save_chunk_summaries,
         limit=args.limit,

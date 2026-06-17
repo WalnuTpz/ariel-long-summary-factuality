@@ -80,6 +80,7 @@ SUMMARY_CHUNK_INPUT_TOKENS="${SUMMARY_CHUNK_INPUT_TOKENS:-6000}"
 SUMMARY_CHUNK_OVERLAP_TOKENS="${SUMMARY_CHUNK_OVERLAP_TOKENS:-256}"
 SUMMARY_CHUNK_MAX_NEW_TOKENS="${SUMMARY_CHUNK_MAX_NEW_TOKENS:-256}"
 SUMMARY_FINAL_MAX_NEW_TOKENS="${SUMMARY_FINAL_MAX_NEW_TOKENS:-384}"
+SUMMARY_TARGET_WORD_TOLERANCE="${SUMMARY_TARGET_WORD_TOLERANCE:-}"
 
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
 EMBEDDING_DEVICE="${EMBEDDING_DEVICE:-cpu}"
@@ -127,6 +128,11 @@ if is_true "${TRUST_REMOTE_CODE}"; then
   trust_remote_code_args+=(--trust-remote-code)
 fi
 
+summary_length_args=()
+if [[ -n "${SUMMARY_TARGET_WORD_TOLERANCE}" ]]; then
+  summary_length_args+=(--target-word-tolerance "${SUMMARY_TARGET_WORD_TOLERANCE}")
+fi
+
 embedding_local_args=()
 if is_true "${EMBEDDING_LOCAL_FILES_ONLY}"; then
   embedding_local_args+=(--local-files-only)
@@ -168,6 +174,7 @@ if is_true "${RUN_SUMMARIZE}"; then
     --final-max-new-tokens "${SUMMARY_FINAL_MAX_NEW_TOKENS}" \
     --resume \
     --continue-on-error \
+    "${summary_length_args[@]}" \
     "${hf_local_args[@]}" \
     "${trust_remote_code_args[@]}"
 else
