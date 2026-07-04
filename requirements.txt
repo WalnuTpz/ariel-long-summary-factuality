@@ -2,3 +2,4 @@ sentence-transformers
 transformers
 torch
 datasets
+datasets
