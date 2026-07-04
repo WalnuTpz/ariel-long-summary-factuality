@@ -1,45 +1,35 @@
-# ARIEL for Long-Document Summary Factuality
+# 面向长文档摘要事实性验证的 ARIEL
 
-This repository contains a lightweight pipeline for evidence-grounded factuality
-verification and local correction in long-document summarization.
+本仓库实现了一个轻量级流水线，用于长文档摘要中的证据驱动事实性验证和局部纠错。
 
-The project was originally developed as an NLP course final project and is
-released here as a cleaned public implementation.
+项目最初是自然语言处理课程的大作业，当前版本整理为便于复现和二次开发的公开实现。
 
-Given a source document and a generated summary, the system splits the summary
-into sentence-level claims, retrieves source evidence for each claim, verifies
-the claim with an NLI model, and optionally performs evidence-conditioned local
-correction for high-risk sentences.
+给定一篇源文档和一段生成摘要，系统会先将摘要拆分为句子级事实声明，再为每个声明从源文档中检索证据，使用 NLI 模型判断该声明是否被证据支持，并可选地对模型预测为高风险的句子进行证据约束的局部改写。
 
-## Highlights
+## 项目亮点
 
-- Long-document summarization pipeline for GovReport-style inputs.
-- Sentence-level evidence retrieval with BM25, dense embedding retrieval, fixed
-  hybrid retrieval, and ARIEL.
-- ARIEL evidence localization with coverage-aware reranking and adaptive
-  evidence expansion.
-- NLI-based factuality estimation using retrieved evidence as premise and each
-  summary sentence as hypothesis.
-- Conservative local correction for model-predicted high-risk sentences.
-- Evaluation scripts for ROUGE, automatic factuality estimates, summary-length
-  analysis, and before/after correction comparison.
+- 面向 GovReport 风格输入的长文档摘要事实性评估流水线。
+- 支持 BM25、稠密向量检索、固定混合检索和 ARIEL 等句子级证据定位方法。
+- ARIEL 证据定位包含三项主要机制：风险类型识别与风险自适应 BM25/向量融合权重、覆盖率感知重排序、自适应邻近证据扩展。
+- 使用检索到的证据作为前提、摘要句子作为假设，通过 NLI 模型估计句子级事实一致性。
+- 对模型预测的高风险句子进行保守的局部纠错，避免自由重写整段摘要。
+- 提供 ROUGE、自动事实性估计、摘要长度分析、检索方法对比、ARIEL 消融和纠错前后对比等评估脚本。
 
-## Repository Structure
+## 仓库结构
 
 ```text
-configs/       Environment-style configs for debug and main experiments
-data/          Data format documentation; large data files are not committed
-scripts/       Pipeline and experiment entry points
-src/           Core implementation
+configs/       debug 和主实验使用的环境变量风格配置
+data/          数据格式说明；大型数据文件不纳入仓库
+scripts/       流水线、实验和表格生成入口
+src/           核心实现代码
 requirements.txt
 ```
 
-No full dataset, generated summaries, experiment outputs, model weights, paper
-drafts, or presentation files are included in this public repository.
+公开仓库不包含完整数据集、生成摘要、实验输出、模型权重、论文草稿或展示文件。
 
-## Installation
+## 环境安装
 
-Python 3.10 or newer is recommended.
+推荐使用 Python 3.10 或更高版本。
 
 ```bash
 python3 -m venv .venv
@@ -47,23 +37,19 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-The first run may download HuggingFace datasets and models. GPU execution is
-recommended for full summarization, NLI verification, and correction runs.
+首次运行时可能需要下载 HuggingFace 数据集和模型。完整的摘要生成、NLI 验证和局部纠错建议使用 GPU。
 
-## Quick Check
+## 快速检查
 
-The repository does not commit real debug data. The debug script downloads a
-small temporary GovReport sample into `/tmp`, uses the reference summaries as
-sentence-level queries, and checks data loading, chunking, retrieval, and
-verification-input formatting:
+仓库没有提交真实 debug 数据。debug 脚本会临时下载一个小型 GovReport 样本到 `/tmp`，并使用参考摘要作为句子级查询，检查数据加载、文档切块、证据检索和验证输入构造是否正常：
 
 ```bash
 bash scripts/run_debug.sh
 ```
 
-## Data Preparation
+## 数据准备
 
-Download a GovReport sample:
+下载 GovReport 样本：
 
 ```bash
 python scripts/download_govreport_sample.py \
@@ -72,7 +58,7 @@ python scripts/download_govreport_sample.py \
   --output data/raw/govreport_main_600.jsonl
 ```
 
-Normalize the downloaded JSONL file:
+规范化下载得到的 JSONL 文件：
 
 ```bash
 python -m src.load_data \
@@ -81,43 +67,40 @@ python -m src.load_data \
   --min-document-chars 2000
 ```
 
-Full experiments also require generated summaries. They can be produced with
-`src.summarize` or by running `scripts/run_pipeline.sh` with `RUN_SUMMARIZE=1`
-in the selected config.
+完整实验还需要生成摘要。可以使用 `src.summarize` 单独生成，也可以在所选配置中设置 `RUN_SUMMARIZE=1` 后运行 `scripts/run_pipeline.sh`。
 
-## Main Commands
+## 主要命令
 
-Compare retrieval methods and ARIEL ablations:
+比较检索方法并运行 ARIEL 消融实验：
 
 ```bash
 CONFIG=configs/main_600_compare_gpu.env bash scripts/run_compare_retrieval.sh
 ```
 
-Run ARIEL verification and local correction:
+运行 ARIEL 验证和局部纠错流水线：
 
 ```bash
 CONFIG=configs/main_600_pipeline_gpu.env bash scripts/run_pipeline.sh
 ```
 
-Generate tables from experiment outputs:
+根据实验输出生成表格：
 
 ```bash
 CONFIG=configs/main_600_tables_gpu.env bash scripts/make_tables.sh
 ```
 
-Run the controlled summary-length experiment:
+运行受控摘要长度实验：
 
 ```bash
 CONFIG=configs/controlled_length_100_gpu.env \
 bash scripts/run_controlled_length_experiment.sh
 ```
 
-CPU variants are also provided in `configs/`, but full runs are substantially
-slower without GPU acceleration.
+`configs/` 中也提供 CPU 配置，但完整实验在没有 GPU 的情况下会明显更慢。
 
-## Notes
+## 说明
 
-- Automatic factuality labels are NLI-based estimates, not human gold labels.
-- ROUGE measures reference overlap and should not be interpreted as factuality.
-- Generated data and experiment outputs are intentionally ignored by git.
-- Config paths can be edited to match local dataset and model locations.
+- 自动事实性标签来自 NLI 模型估计，不是人工标注的金标准标签。
+- ROUGE 衡量的是生成摘要与参考摘要的词面重叠，不应被解释为事实性指标。
+- 生成数据和实验输出会被 git 忽略。
+- 配置文件中的路径可以按本地数据集和模型缓存位置修改。
