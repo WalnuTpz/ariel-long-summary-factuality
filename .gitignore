@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Local agent/tool state
+.codex/
+.agents/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+data/raw/*
+data/processed/*
+data/results/*
+!data/README.md
+
+# Outputs
+outputs/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+*:Zone.Identifier
+
+# Large model artifacts
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Private/local materials
+docs/
+*.pptx
+*.pdf
