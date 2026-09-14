@@ -105,7 +105,7 @@ For ARIEL outputs, each top-k item may additionally include coverage features:
 
 ```json
 {
-  "entity_overlap": 0.0,
+  "entity_coverage": 0.0,
   "number_date_coverage": 0.0,
   "risk_type": "number_date|entity|relation|general",
   "expanded_context": false
@@ -166,8 +166,9 @@ Information sentences. It should not rewrite the whole summary freely.
 
 Current correction uses evidence-conditioned sentence rewriting only. The model
 is asked to output one corrected sentence; the program records `replace` only
-when the text actually changes and records `keep` for supported sentences,
-low-confidence NEI sentences, unchanged rewrites, or fallback cases.
+when the text actually changes and records `keep` for low-confidence NEI
+sentences, unchanged rewrites, or fallback cases. Supported sentences are
+copied unchanged without adding a `sentence_edits` entry.
 
 ## Evaluation JSONL
 

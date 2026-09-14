@@ -557,7 +557,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=0.0,
         help=(
             "Optional relative word-count tolerance used to write an explicit "
-            "target range in prompts. For example, 0.15 requests 85%-115% of "
+            "target range in prompts. For example, 0.15 requests 85%%-115%% of "
             "the target word count. The default keeps the original about-X "
             "prompt wording."
         ),

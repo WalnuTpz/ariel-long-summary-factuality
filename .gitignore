@@ -42,6 +42,5 @@ logs/
 *.safetensors
 
 # Private/local materials
-docs/
 *.pptx
 *.pdf
