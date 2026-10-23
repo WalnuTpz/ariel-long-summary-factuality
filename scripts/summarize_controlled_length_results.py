@@ -53,15 +53,11 @@ def count(value: float | int | None) -> str:
     return str(int(round(float(value))))
 
 
-def load_row(run_root: Path, label: str) -> dict[str, Any] | None:
+def load_row(run_root: Path, label: str) -> dict[str, Any]:
     run_dir = run_root / label
     summary_path = run_dir / "evaluation.ariel.summary.json"
-    if not summary_path.exists():
-        return None
     data = load_json(summary_path)
-    metrics = data.get("by_version", {}).get("before_correction")
-    if not isinstance(metrics, dict):
-        return None
+    metrics = data["by_version"]["before_correction"]
     return {
         "label": label,
         "target_words": first_summary_target_words(run_dir / "generated_summaries.jsonl"),
@@ -125,9 +121,7 @@ def main() -> None:
     args = parser.parse_args()
 
     run_root = Path(args.run_root)
-    rows = [row for label in args.labels if (row := load_row(run_root, label)) is not None]
-    if not rows:
-        raise SystemExit(f"no controlled-length results found under {run_root}")
+    rows = [load_row(run_root, label) for label in args.labels]
 
     markdown_path = ensure_parent_dir(args.output_markdown)
     json_path = ensure_parent_dir(args.output_json)

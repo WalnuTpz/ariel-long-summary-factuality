@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from src.split_summary_sentences import make_query_id, make_summary_id
 from src.utils import first_present, iter_jsonl, normalize_whitespace, write_jsonl
 
 
@@ -34,12 +35,12 @@ class VerificationInputStats:
 def normalize_sentence_record(item: dict[str, Any], index: int) -> dict[str, Any]:
     doc_id = str(item.get("doc_id") or "").strip()
     query_id = str(item.get("query_id") or "").strip()
+    summary_id = make_summary_id(item, doc_id)
+    sentence_id = item.get("sentence_id", index)
     if not query_id and doc_id:
-        query_id = f"{doc_id}_s{index:03d}"
+        query_id = make_query_id(doc_id, summary_id, sentence_id)
 
     sentence = normalize_whitespace(first_present(item, SENTENCE_TEXT_KEYS))
-    summary_id = str(item.get("summary_id") or "").strip()
-    sentence_id = item.get("sentence_id")
 
     return {
         "query_id": query_id,

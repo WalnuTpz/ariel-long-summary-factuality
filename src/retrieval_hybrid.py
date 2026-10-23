@@ -105,7 +105,7 @@ def fuse_one_result(
         )
         fused.append(chunk)
 
-    fused.sort(key=lambda item: item["score"], reverse=True)
+    fused.sort(key=lambda item: (-item["score"], item["chunk_id"]))
     top_chunks = []
     for rank, item in enumerate(fused[:top_k], start=1):
         item = dict(item)

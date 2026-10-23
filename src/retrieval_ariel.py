@@ -16,6 +16,7 @@ from typing import Any, Iterable
 from src.retrieval_hybrid import (
     index_by_query_id,
     merge_chunk_metadata,
+    minmax_normalize,
     score_map,
     top_k_by_chunk,
 )
@@ -111,7 +112,7 @@ STOPWORDS = {
     "were",
     "with",
 }
-NUMBER_PATTERN = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?%?\b|\$\s*\d+(?:,\d{3})*(?:\.\d+)?")
+NUMBER_PATTERN = re.compile(r"\b\d+(?:,\d{3})*(?:\.\d+)?\b%?|\$\s*\d+(?:,\d{3})*(?:\.\d+)?")
 YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
 MONTH_PATTERN = re.compile(
     r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
@@ -159,16 +160,6 @@ class ArielStats:
 
     def record_expansion(self, count: int) -> None:
         self.expanded_evidence_items += count
-
-
-def minmax_normalize(scores: dict[str, float]) -> dict[str, float]:
-    if not scores:
-        return {}
-    minimum = min(scores.values())
-    maximum = max(scores.values())
-    if maximum == minimum:
-        return {key: 1.0 for key in scores}
-    return {key: (value - minimum) / (maximum - minimum) for key, value in scores.items()}
 
 
 def safe_ratio(matched: int, total: int) -> float:
@@ -284,19 +275,7 @@ def compute_coverage_features(
     chunk_text: str,
     risk_type: str,
     coverage_weights_by_risk: dict[str, dict[str, float]],
-    enable_coverage: bool = True,
 ) -> dict[str, Any]:
-    if not enable_coverage:
-        return {
-            "keyword_coverage": 0.0,
-            "number_date_coverage": 0.0,
-            "entity_coverage": 0.0,
-            "coverage_bonus": 0.0,
-            "matched_keywords": [],
-            "matched_number_date_terms": [],
-            "matched_entities": [],
-        }
-
     keyword_score, matched_keywords = keyword_coverage(query, chunk_text)
     number_date_score, matched_number_date_terms = number_date_coverage(query, chunk_text)
     entity_score, matched_entities = entity_coverage(query, chunk_text)
@@ -444,7 +423,6 @@ def maybe_expand_evidence(
         chunk_text=expanded_text,
         risk_type=risk_type,
         coverage_weights_by_risk=coverage_weights_by_risk,
-        enable_coverage=True,
     )
     if float(expanded_features["coverage_bonus"]) < float(coverage_features["coverage_bonus"]):
         chunk_id = str(chunk.get("chunk_id") or "").strip()
@@ -560,7 +538,6 @@ def fuse_one_ariel_result(
             chunk_text=str(chunk.get("text") or ""),
             risk_type=risk_type,
             coverage_weights_by_risk=coverage_weights_by_risk,
-            enable_coverage=enable_coverage,
         )
         evidence_text, coverage_features, expanded, expanded_chunk_ids, expansion_reason = (
             maybe_expand_evidence(
@@ -572,9 +549,12 @@ def fuse_one_ariel_result(
                 coverage_weights_by_risk=coverage_weights_by_risk,
                 chunk_lookup=chunk_lookup,
                 expansion_radius=expansion_radius,
-                enable_expansion=enable_expansion and enable_coverage,
+                enable_expansion=enable_expansion,
             )
         )
+        # Expansion still uses coverage when the reranking bonus is ablated.
+        if not enable_coverage:
+            coverage_features["coverage_bonus"] = 0.0
         ariel_score = base_score + float(coverage_features["coverage_bonus"])
         chunk["text"] = evidence_text
         chunk.update(
@@ -600,7 +580,7 @@ def fuse_one_ariel_result(
         )
         fused.append(chunk)
 
-    fused.sort(key=lambda item: item["score"], reverse=True)
+    fused.sort(key=lambda item: (-item["score"], item["chunk_id"]))
     top_chunks = []
     for rank, item in enumerate(fused[:top_k], start=1):
         item = dict(item)

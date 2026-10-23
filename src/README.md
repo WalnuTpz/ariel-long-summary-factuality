@@ -29,7 +29,8 @@ Current modules:
   `facebook/bart-large-mnli`.
 - `correct_local.py`: perform evidence-conditioned local rewrite for
   Unsupported summary sentences and high-confidence Not Enough Information
-  sentences, then reconstruct the corrected summary. It records `replace`
+  sentences, then reconstruct the corrected summary while retaining unselected text and
+  original sentence positions. It records `replace`
   only when the corrected sentence actually changes; otherwise it records
   `keep` with a reason.
 - `evaluate_summary.py`: compute dependency-free ROUGE-1/2/L, sentence-level

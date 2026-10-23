@@ -145,65 +145,33 @@ run_cmd "${PYTHON_BIN}" -m src.split_summary_sentences \
   --output "${SENTENCES}" \
   "${summary_field_args[@]}"
 
-run_cmd "${PYTHON_BIN}" -m src.retrieval_bm25 \
-  --chunks "${CHUNKS}" \
-  --queries "${SENTENCES}" \
-  --output "${BM25_RETRIEVAL}" \
-  --top-k "${TOP_K}"
+IFS=' ' read -r -a method_names <<< "${METHODS}"
+need_bm25=0
+need_embedding=0
+for method in "${method_names[@]}"; do
+  case "${method}" in
+    bm25) need_bm25=1 ;;
+    embedding) need_embedding=1 ;;
+    hybrid|ariel|ariel_no_coverage|ariel_no_expansion|ariel_no_risk_weighting)
+      need_bm25=1
+      need_embedding=1
+      ;;
+    *) echo "unsupported method: ${method}" >&2; exit 1 ;;
+  esac
+done
 
-run_cmd "${PYTHON_BIN}" -m src.retrieval_embedding \
-  --chunks "${CHUNKS}" \
-  --queries "${SENTENCES}" \
-  --output "${EMBEDDING_RETRIEVAL}" \
-  --top-k "${TOP_K}" \
-  --model-name "${EMBEDDING_MODEL}" \
-  --device "${EMBEDDING_DEVICE}" \
-  "${embedding_local_args[@]}"
-
-run_cmd "${PYTHON_BIN}" -m src.retrieval_hybrid \
-  --bm25 "${BM25_RETRIEVAL}" \
-  --embedding "${EMBEDDING_RETRIEVAL}" \
-  --output "${HYBRID_RETRIEVAL}" \
-  --alpha "${HYBRID_ALPHA}" \
-  --top-k "${TOP_K}"
-
-run_cmd "${PYTHON_BIN}" -m src.retrieval_ariel \
-  --bm25 "${BM25_RETRIEVAL}" \
-  --embedding "${EMBEDDING_RETRIEVAL}" \
-  --output "${ARIEL_RETRIEVAL}" \
-  --queries "${SENTENCES}" \
-  --chunks "${CHUNKS}" \
-  --top-k "${TOP_K}"
-
-run_cmd "${PYTHON_BIN}" -m src.retrieval_ariel \
-  --bm25 "${BM25_RETRIEVAL}" \
-  --embedding "${EMBEDDING_RETRIEVAL}" \
-  --output "${ARIEL_NO_COVERAGE_RETRIEVAL}" \
-  --queries "${SENTENCES}" \
-  --chunks "${CHUNKS}" \
-  --top-k "${TOP_K}" \
-  --disable-coverage-rerank
-
-run_cmd "${PYTHON_BIN}" -m src.retrieval_ariel \
-  --bm25 "${BM25_RETRIEVAL}" \
-  --embedding "${EMBEDDING_RETRIEVAL}" \
-  --output "${ARIEL_NO_EXPANSION_RETRIEVAL}" \
-  --queries "${SENTENCES}" \
-  --chunks "${CHUNKS}" \
-  --top-k "${TOP_K}" \
-  --disable-adaptive-expansion
-
-run_cmd "${PYTHON_BIN}" -m src.retrieval_ariel \
-  --bm25 "${BM25_RETRIEVAL}" \
-  --embedding "${EMBEDDING_RETRIEVAL}" \
-  --output "${ARIEL_NO_RISK_WEIGHTING_RETRIEVAL}" \
-  --queries "${SENTENCES}" \
-  --chunks "${CHUNKS}" \
-  --top-k "${TOP_K}" \
-  --number-date-alpha "${HYBRID_ALPHA}" \
-  --entity-alpha "${HYBRID_ALPHA}" \
-  --relation-alpha "${HYBRID_ALPHA}" \
-  --general-alpha "${HYBRID_ALPHA}"
+if is_true "${need_bm25}"; then
+  run_cmd "${PYTHON_BIN}" -m src.retrieval_bm25 \
+    --chunks "${CHUNKS}" --queries "${SENTENCES}" \
+    --output "${BM25_RETRIEVAL}" --top-k "${TOP_K}"
+fi
+if is_true "${need_embedding}"; then
+  run_cmd "${PYTHON_BIN}" -m src.retrieval_embedding \
+    --chunks "${CHUNKS}" --queries "${SENTENCES}" \
+    --output "${EMBEDDING_RETRIEVAL}" --top-k "${TOP_K}" \
+    --model-name "${EMBEDDING_MODEL}" --device "${EMBEDDING_DEVICE}" \
+    "${embedding_local_args[@]}"
+fi
 
 retrieval_path_for_method() {
   case "$1" in
@@ -214,17 +182,33 @@ retrieval_path_for_method() {
     ariel_no_coverage) echo "${ARIEL_NO_COVERAGE_RETRIEVAL}" ;;
     ariel_no_expansion) echo "${ARIEL_NO_EXPANSION_RETRIEVAL}" ;;
     ariel_no_risk_weighting) echo "${ARIEL_NO_RISK_WEIGHTING_RETRIEVAL}" ;;
-    *)
-      echo "unsupported method: $1" >&2
-      exit 1
-      ;;
   esac
 }
 
-IFS=' ' read -r -a method_names <<< "${METHODS}"
-
 for method in "${method_names[@]}"; do
   retrieval_path="$(retrieval_path_for_method "${method}")"
+  case "${method}" in
+    hybrid)
+      run_cmd "${PYTHON_BIN}" -m src.retrieval_hybrid \
+        --bm25 "${BM25_RETRIEVAL}" --embedding "${EMBEDDING_RETRIEVAL}" \
+        --output "${retrieval_path}" --alpha "${HYBRID_ALPHA}" --top-k "${TOP_K}"
+      ;;
+    ariel|ariel_no_coverage|ariel_no_expansion|ariel_no_risk_weighting)
+      ablation_args=()
+      case "${method}" in
+        ariel_no_coverage) ablation_args+=(--disable-coverage-rerank) ;;
+        ariel_no_expansion) ablation_args+=(--disable-adaptive-expansion) ;;
+        ariel_no_risk_weighting)
+          ablation_args+=(--number-date-alpha "${HYBRID_ALPHA}" --entity-alpha "${HYBRID_ALPHA}"
+                          --relation-alpha "${HYBRID_ALPHA}" --general-alpha "${HYBRID_ALPHA}")
+          ;;
+      esac
+      run_cmd "${PYTHON_BIN}" -m src.retrieval_ariel \
+        --bm25 "${BM25_RETRIEVAL}" --embedding "${EMBEDDING_RETRIEVAL}" \
+        --output "${retrieval_path}" --queries "${SENTENCES}" --chunks "${CHUNKS}" \
+        --top-k "${TOP_K}" "${ablation_args[@]}"
+      ;;
+  esac
   verification_path="${RUN_DIR}/verification.${method}.jsonl"
   evaluation_records_path="${RUN_DIR}/evaluation.${method}.jsonl"
   evaluation_summary_path="${RUN_DIR}/evaluation.${method}.summary.json"

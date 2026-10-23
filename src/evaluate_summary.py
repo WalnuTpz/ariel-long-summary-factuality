@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from src.split_summary_sentences import make_summary_id
 from src.utils import (
     ensure_parent_dir,
     first_present,
@@ -64,7 +65,7 @@ def summary_key(doc_id: str, summary_id: str) -> tuple[str, str]:
 
 
 def normalize_summary_id(item: dict[str, Any], doc_id: str) -> str:
-    return str(item.get("summary_id") or f"{doc_id}_summary").strip()
+    return make_summary_id(item, doc_id)
 
 
 def resolve_text(item: dict[str, Any], keys: Iterable[str], forced_key: str | None = None) -> tuple[str, str]:
@@ -112,7 +113,9 @@ def load_summaries(
             stats.skipped_missing_summary += 1
             continue
 
-        reference_text, reference_source = resolve_text(item, keys=REFERENCE_TEXT_KEYS)
+        reference_text, reference_source = resolve_text(
+            item, keys=(key for key in REFERENCE_TEXT_KEYS if key != summary_source)
+        )
         if not reference_text:
             reference_text, reference_source = resolve_text(
                 documents_by_doc_id.get(doc_id, {}),
@@ -256,29 +259,25 @@ def length_buckets_by_key(
 
 def load_verification_metrics(
     path: str | Path | None,
-) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]], int]:
+) -> tuple[dict[tuple[str, str], dict[str, Any]], int]:
     if path is None:
-        return {}, {}, 0
+        return {}, 0
 
     counts_by_key: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
-    counts_by_doc_id: dict[str, Counter[str]] = defaultdict(Counter)
     count = 0
     for item in iter_jsonl(path):
         count += 1
         doc_id = str(item.get("doc_id") or "").strip()
         if not doc_id:
             continue
-        summary_id = str(item.get("summary_id") or "").strip()
+        summary_id = normalize_summary_id(item, doc_id)
         label = str(item.get("label") or "").strip()
         if not label:
             continue
-        if summary_id:
-            counts_by_key[summary_key(doc_id, summary_id)][label] += 1
-        counts_by_doc_id[doc_id][label] += 1
+        counts_by_key[summary_key(doc_id, summary_id)][label] += 1
 
     return (
         {key: factuality_metrics(counter) for key, counter in counts_by_key.items()},
-        {doc_id: factuality_metrics(counter) for doc_id, counter in counts_by_doc_id.items()},
         count,
     )
 
@@ -301,15 +300,6 @@ def factuality_metrics(counter: Counter[str]) -> dict[str, Any]:
         "unsupported_or_nei_ratio": round(risk_ratio, 6) if risk_ratio is not None else None,
         "label_counts": dict(counter),
     }
-
-
-def lookup_factuality(
-    key: tuple[str, str],
-    by_key: dict[tuple[str, str], dict[str, Any]],
-    by_doc_id: dict[str, dict[str, Any]],
-) -> dict[str, Any] | None:
-    doc_id, _ = key
-    return by_key.get(key) or by_doc_id.get(doc_id)
 
 
 def make_eval_record(
@@ -357,14 +347,12 @@ def make_eval_record(
 def evaluate_records(
     summaries: dict[tuple[str, str], dict[str, Any]],
     corrections: dict[tuple[str, str], dict[str, Any]],
-    verification_before: tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]]],
-    verification_after: tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]]],
+    verification_before: dict[tuple[str, str], dict[str, Any]],
+    verification_after: dict[tuple[str, str], dict[str, Any]],
     short_max_words: int,
     medium_max_words: int,
     length_bucket_strategy: str,
 ) -> tuple[list[dict[str, Any]], int, int]:
-    before_by_key, before_by_doc = verification_before
-    after_by_key, after_by_doc = verification_after
     records: list[dict[str, Any]] = []
     without_reference = 0
     without_verification = 0
@@ -377,7 +365,7 @@ def evaluate_records(
 
     for key, base_summary in summaries.items():
         length_bucket_name = bucket_by_key.get(key, "medium")
-        before_factuality = lookup_factuality(key, before_by_key, before_by_doc)
+        before_factuality = verification_before.get(key)
         if before_factuality is None:
             without_verification += 1
         if not base_summary.get("reference_summary"):
@@ -396,7 +384,7 @@ def evaluate_records(
         correction_record = corrections.get(key)
         if correction_record is None:
             continue
-        after_factuality = lookup_factuality(key, after_by_key, after_by_doc)
+        after_factuality = verification_after.get(key)
         if after_factuality is None:
             without_verification += 1
         corrected_summary = normalize_whitespace(correction_record.get("corrected_summary"))
@@ -515,10 +503,10 @@ def evaluate_summary_jsonl(
     corrections, correction_count = load_corrections(corrections_path)
     stats.input_corrections = correction_count
 
-    before_by_key, before_by_doc, before_count = load_verification_metrics(
+    before_by_key, before_count = load_verification_metrics(
         verification_before_path
     )
-    after_by_key, after_by_doc, after_count = load_verification_metrics(
+    after_by_key, after_count = load_verification_metrics(
         verification_after_path
     )
     stats.verification_before_records = before_count
@@ -527,8 +515,8 @@ def evaluate_summary_jsonl(
     records, missing_reference, missing_verification = evaluate_records(
         summaries=summaries,
         corrections=corrections,
-        verification_before=(before_by_key, before_by_doc),
-        verification_after=(after_by_key, after_by_doc),
+        verification_before=before_by_key,
+        verification_after=after_by_key,
         short_max_words=short_max_words,
         medium_max_words=medium_max_words,
         length_bucket_strategy=length_bucket_strategy,

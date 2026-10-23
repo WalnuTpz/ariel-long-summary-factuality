@@ -151,7 +151,9 @@ def classify_case(
         return CASE_EVIDENCE_INSUFFICIENT, 95
     if is_risk_label(before_label):
         if after_label == SUPPORTED:
-            return CASE_SUCCESSFUL_CORRECTION, 100
+            if action == "replace":
+                return CASE_SUCCESSFUL_CORRECTION, 100
+            return CASE_RISK_UNCORRECTED, 60
         if after_label and is_risk_label(after_label):
             return CASE_CORRECTION_FAILED, 90
         if action in {"replace", "remove"}:

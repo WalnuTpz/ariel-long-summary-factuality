@@ -91,7 +91,7 @@ def normalize_record(
             if key not in used_keys and value not in (None, "")
         }
     )
-    meta["source_index"] = index
+    meta.setdefault("source_index", index)
 
     return (
         DocumentRecord(

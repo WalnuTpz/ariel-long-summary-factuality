@@ -83,6 +83,7 @@ if [[ "${SOURCE_DOCUMENTS}" != "${DOCUMENTS}" ]]; then
 fi
 require_file "${DOCUMENTS}"
 
+length_labels=()
 for spec in ${LENGTH_SPECS}; do
   IFS=':' read -r label target_words chunk_max_new final_max_new <<< "${spec}"
   if [[ -z "${label}" || -z "${target_words}" || -z "${chunk_max_new}" || -z "${final_max_new}" ]]; then
@@ -90,8 +91,10 @@ for spec in ${LENGTH_SPECS}; do
     exit 1
   fi
 
+  length_labels+=("${label}")
   run_dir="${RUN_ROOT}/${label}"
   run_cmd env \
+    CONFIG= \
     PYTHON="${PYTHON_BIN}" \
     RUN_NAME="${CONTROLLED_RUN_NAME}_${label}" \
     RUN_DIR="${run_dir}" \
@@ -107,6 +110,7 @@ for spec in ${LENGTH_SPECS}; do
     CHUNK_TYPE="${CHUNK_TYPE}" \
     CHUNK_MAX_TOKENS="${CHUNK_MAX_TOKENS}" \
     CHUNK_STRIDE="${CHUNK_STRIDE}" \
+    CHUNKS="${CHUNKS:-}" \
     HYBRID_ALPHA="${HYBRID_ALPHA}" \
     HF_LOCAL_FILES_ONLY="${HF_LOCAL_FILES_ONLY}" \
     TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE}" \
@@ -129,11 +133,13 @@ for spec in ${LENGTH_SPECS}; do
     NLI_ENTAILMENT_THRESHOLD="${NLI_ENTAILMENT_THRESHOLD}" \
     NLI_CONTRADICTION_THRESHOLD="${NLI_CONTRADICTION_THRESHOLD}" \
     NLI_LOCAL_FILES_ONLY="${NLI_LOCAL_FILES_ONLY}" \
+    NLI_LIMIT="${NLI_LIMIT:-}" \
     bash scripts/run_pipeline.sh
 done
 
 run_cmd "${PYTHON_BIN}" scripts/summarize_controlled_length_results.py \
   --run-root "${RUN_ROOT}" \
+  --labels "${length_labels[@]}" \
   --output-markdown "${OUTPUT_DIR}/controlled_length.md" \
   --output-json "${OUTPUT_DIR}/controlled_length.json"
 

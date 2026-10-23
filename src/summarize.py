@@ -174,6 +174,7 @@ class HuggingFaceSummarizer:
         do_sample: bool,
         temperature: float,
         top_p: float,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         try:
             import torch
@@ -190,6 +191,7 @@ class HuggingFaceSummarizer:
         self.do_sample = do_sample
         self.temperature = temperature
         self.top_p = top_p
+        self.system_prompt = system_prompt
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
@@ -257,23 +259,23 @@ class HuggingFaceSummarizer:
 
     def format_chat_prompt(self, user_prompt: str) -> str:
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        try:
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-        except Exception:
-            return f"{SYSTEM_PROMPT}\n\n{user_prompt}\n\nSummary:"
+        if self.tokenizer.chat_template is None:
+            return f"{self.system_prompt}\n\n{user_prompt}\n\nAssistant:"
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     def generate(self, user_prompt: str, max_new_tokens: int) -> str:
         prompt_text = self.format_chat_prompt(user_prompt)
         inputs = self.tokenizer(
             prompt_text,
             return_tensors="pt",
+            add_special_tokens=self.tokenizer.chat_template is None,
             truncation=True,
             max_length=self.max_prompt_tokens,
         )

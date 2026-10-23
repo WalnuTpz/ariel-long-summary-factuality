@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from src.summarize import DEFAULT_MODEL_NAME, HuggingFaceSummarizer
-from src.split_summary_sentences import split_sentences
+from src.split_summary_sentences import make_summary_id, split_sentences
 from src.utils import (
     ensure_parent_dir,
     first_present,
@@ -40,6 +40,10 @@ SUMMARY_TEXT_KEYS = (
     "clean_summary",
     "reference_summary",
 )
+CORRECTION_SYSTEM_PROMPT = (
+    "Correct the given summary sentence using source evidence. "
+    "Return only a JSON object with the corrected_sentence field."
+)
 ACTION_REPLACE = "replace"
 ACTION_REMOVE = "remove"
 ACTION_KEEP = "keep"
@@ -53,6 +57,7 @@ FALLBACK_FORMAT_ARTIFACT = "format_artifact"
 FALLBACK_MARKUP_ARTIFACT = "markup_or_json_artifact"
 FALLBACK_ABSOLUTE_LENGTH = "absolute_length_limit"
 FALLBACK_RELATIVE_LENGTH = "relative_length_limit"
+FALLBACK_MULTIPLE_SENTENCES = "multiple_sentences"
 FALLBACK_MODEL_EXCEPTION = "model_exception"
 RAW_CONTRADICTION = "contradiction"
 RAW_NEUTRAL = "neutral"
@@ -101,7 +106,6 @@ class CorrectionStats:
     input_verification_results: int = 0
     written_records: int = 0
     skipped_missing_summary_text: int = 0
-    skipped_summaries_without_sentences: int = 0
     supported_sentences: int = 0
     risk_sentences: int = 0
     sentences_without_verification: int = 0
@@ -128,7 +132,7 @@ def resolve_summary_text(item: dict[str, Any], summary_field: str | None = None)
 
 
 def normalize_summary_id(item: dict[str, Any], doc_id: str) -> str:
-    return str(item.get("summary_id") or f"{doc_id}_summary").strip()
+    return make_summary_id(item, doc_id)
 
 
 def summary_key(doc_id: str, summary_id: str) -> tuple[str, str]:
@@ -138,10 +142,9 @@ def summary_key(doc_id: str, summary_id: str) -> tuple[str, str]:
 def index_summaries(
     summaries_path: str | Path,
     summary_field: str | None,
-) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]], CorrectionStats]:
+) -> tuple[dict[tuple[str, str], dict[str, Any]], CorrectionStats]:
     stats = CorrectionStats()
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    by_doc_id: dict[str, dict[str, Any]] = {}
 
     for item in iter_jsonl(summaries_path):
         stats.input_summaries += 1
@@ -159,9 +162,8 @@ def index_summaries(
         record["original_summary"] = summary_text
         record["source_summary_field"] = used_field
         by_key[summary_key(doc_id, summary_id)] = record
-        by_doc_id.setdefault(doc_id, record)
 
-    return by_key, by_doc_id, stats
+    return by_key, stats
 
 
 def sentence_sort_key(item: dict[str, Any]) -> tuple[int, str]:
@@ -180,7 +182,7 @@ def group_sentences(sentences_path: str | Path) -> tuple[dict[tuple[str, str], l
         doc_id = str(item.get("doc_id") or "").strip()
         if not doc_id:
             continue
-        summary_id = str(item.get("summary_id") or f"{doc_id}_summary").strip()
+        summary_id = make_summary_id(item, doc_id)
         sentence = normalize_whitespace(first_present(item, ("text", "sentence", "query")))
         if not sentence:
             continue
@@ -424,6 +426,8 @@ def validate_corrected_sentence(
         return "", "format_artifact: corrected sentence contains response-format artifacts."
     if "```" in sentence or "{" in sentence or "}" in sentence:
         return "", "markup_or_json_artifact: corrected sentence contains markup or JSON artifacts."
+    if len(split_sentences(sentence)) != 1:
+        return "", "multiple_sentences: correction must contain exactly one sentence."
     word_count = len(simple_tokenize(sentence))
     if max_sentence_words > 0 and word_count > max_sentence_words:
         return "", (
@@ -471,6 +475,7 @@ def fallback_reason_code(reason: str) -> str:
             FALLBACK_MARKUP_ARTIFACT,
             FALLBACK_ABSOLUTE_LENGTH,
             FALLBACK_RELATIVE_LENGTH,
+            FALLBACK_MULTIPLE_SENTENCES,
             FALLBACK_MODEL_EXCEPTION,
         }
         if candidate in known_codes:
@@ -699,6 +704,10 @@ def build_corrected_record(
             action = ACTION_KEEP
             corrected_sentence = sentence
             reason = "Correction model returned the original sentence unchanged."
+        elif action == ACTION_REPLACE:
+            # Keep a changed sentence separate from the following sentence when joining.
+            if not re.search(r"[.!?][\"'’”)\]]*$", corrected_sentence):
+                corrected_sentence += "."
 
         count_action(stats, action)
         corrected_sentences.append(corrected_sentence or sentence)
@@ -716,7 +725,14 @@ def build_corrected_record(
         )
 
     original_summary = summary_record["original_summary"]
-    corrected_summary = join_summary_sentences(corrected_sentences)
+    replacements = {
+        record["sentence_id"]: text
+        for record, text in zip(sentence_records, corrected_sentences)
+    }
+    corrected_summary = join_summary_sentences([
+        replacements.get(sentence_id, sentence)
+        for sentence_id, sentence in enumerate(split_sentences(original_summary), start=1)
+    ])
     return {
         "doc_id": summary_record["doc_id"],
         "summary_id": summary_record["summary_id"],
@@ -759,11 +775,13 @@ def correct_local_jsonl(
     continue_on_error: bool = False,
     save_model_outputs: bool = False,
 ) -> CorrectionStats:
-    summaries_by_key, summaries_by_doc_id, stats = index_summaries(
+    summaries_by_key, stats = index_summaries(
         summaries_path=summaries_path,
         summary_field=summary_field,
     )
     grouped_sentences, sentence_count = group_sentences(sentences_path)
+    for key in summaries_by_key:
+        grouped_sentences.setdefault(key, [])
     verification_by_query_id, verification_count = index_verification(verification_path)
     stats.input_sentences = sentence_count
     stats.input_verification_results = verification_count
@@ -778,6 +796,7 @@ def correct_local_jsonl(
         do_sample=do_sample,
         temperature=temperature,
         top_p=top_p,
+        system_prompt=CORRECTION_SYSTEM_PROMPT,
     )
 
     output_path = ensure_parent_dir(output_path)
@@ -786,14 +805,7 @@ def correct_local_jsonl(
         for key, sentence_records in grouped_sentences.items():
             if limit is not None and written >= limit:
                 break
-            doc_id, _ = key
-            summary_record = summaries_by_key.get(key) or summaries_by_doc_id.get(doc_id)
-            if summary_record is None:
-                stats.skipped_missing_summary_text += 1
-                continue
-            if not sentence_records:
-                stats.skipped_summaries_without_sentences += 1
-                continue
+            summary_record = summaries_by_key[key]
 
             record = build_corrected_record(
                 summary_record=summary_record,

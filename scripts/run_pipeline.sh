@@ -352,10 +352,10 @@ if is_true "${RUN_CASE_EXPORT}"; then
     --output-markdown "${CASES_MD}"
     --max-cases 10
   )
-  if [[ -s "${CORRECTIONS}" ]]; then
+  if is_true "${RUN_CORRECTION}"; then
     case_args+=(--corrections "${CORRECTIONS}")
   fi
-  if [[ -s "${VERIFY_AFTER}" ]]; then
+  if is_true "${RUN_CORRECTION}" && is_true "${RUN_AFTER_VERIFY}"; then
     case_args+=(--verification-after "${VERIFY_AFTER}")
   fi
   run_cmd "${PYTHON_BIN}" -m src.export_cases "${case_args[@]}"

@@ -105,7 +105,7 @@ def protect_sentence_text(text: str) -> str:
         lambda match: match.group(0).replace(".", DOT_PLACEHOLDER),
         protected,
     )
-    for abbreviation in ABBREVIATIONS:
+    for abbreviation in sorted(ABBREVIATIONS, key=len, reverse=True):
         protected = protected.replace(abbreviation, abbreviation.replace(".", DOT_PLACEHOLDER))
     return DECIMAL_DOT_PATTERN.sub(DOT_PLACEHOLDER, protected)
 
@@ -143,6 +143,10 @@ def make_summary_id(item: dict[str, Any], doc_id: str) -> str:
     return raw_summary_id or f"{doc_id}_summary"
 
 
+def make_query_id(doc_id: str, summary_id: str, sentence_id: int) -> str:
+    return f"{doc_id}::{summary_id}::s{sentence_id:03d}"
+
+
 def make_sentence_record(
     item: dict[str, Any],
     doc_id: str,
@@ -152,7 +156,7 @@ def make_sentence_record(
     summary_word_count: int,
     source_summary_field: str,
 ) -> dict[str, Any]:
-    query_id = f"{doc_id}_s{sentence_id:03d}"
+    query_id = make_query_id(doc_id, summary_id, sentence_id)
     record = {
         "query_id": query_id,
         "doc_id": doc_id,
@@ -192,12 +196,20 @@ def split_summary_records(
 
         summary_id = make_summary_id(item, doc_id=doc_id)
         summary_word_count = len(simple_tokenize(summary_text))
-        sentence_id = 0
-        for sentence in split_sentences(summary_text):
-            if len(sentence) < min_sentence_chars:
+        original_text = summary_text
+        edits = {}
+        if used_field == "corrected_summary" and "sentence_edits" in item:
+            original_text = item["original_summary"]
+            edits = {
+                edit["sentence_id"]: edit["corrected_sentence"]
+                for edit in item["sentence_edits"]
+            }
+        # Original positions survive filtering and local edits, including short rewrites.
+        for sentence_id, original_sentence in enumerate(split_sentences(original_text), start=1):
+            if len(original_sentence) < min_sentence_chars:
                 stats.skipped_short_sentences += 1
                 continue
-            sentence_id += 1
+            sentence = edits.get(sentence_id, original_sentence)
             output.append(
                 make_sentence_record(
                     item=item,

@@ -109,6 +109,10 @@ CONFIG=configs/main_600_compare_gpu.env bash scripts/run_compare_retrieval.sh
 | NLI 聚合 | `per_chunk`，分别验证每条证据 |
 | 蕴含／矛盾阈值 | 均为 0.5 |
 
+覆盖率消融仅移除排序加分，仍按覆盖率判断是否扩展上下文；上下文扩展消融仅关闭扩展。
+Fixed Hybrid 与 ARIEL 使用相同的 min-max 归一化规则，同分证据按 chunk ID 排序。
+早期版本的覆盖率消融同时关闭了扩展，相关旧结果需要重新运行才能用于单因素比较。
+
 结果位于 `data/results/main_600_compare_gpu/`：
 
 ```text
@@ -205,4 +209,19 @@ outputs/tables/controlled_length_100_wide_gpu/controlled_length.json
 )
 ```
 
+句子标识包含文档和摘要 ID，纠错后沿用原句位置，具体格式见 [数据说明](../data/README.md)。
+升级旧版结果时可保留生成摘要，但应重新生成分句及其下游结果。
+案例导出只读取本次启用阶段的结果；表格使用评估文件已有的长度分桶。
+指定的主方法、纠错结果目录或受控长度结果缺失时会报错。
+
 每轮实验保留所用配置、规范化文档、生成摘要和相应结果目录。主实验数据与模型当前通过名称下载；保存运行时的数据和模型版本，有助于后续复用同一批输入。配置字段说明见 [configs/README.md](../configs/README.md)。
+
+## 9. 不加载模型的回归检查
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+测试使用标准库和小型合成 JSONL，覆盖证据融合、句子关联、局部纠错、评估及 Bash
+实验编排。模型调用和下载边界使用替身，不需要安装模型依赖或下载数据集。
+这些检查验证程序行为，不代表真实模型的生成质量或事实性效果。

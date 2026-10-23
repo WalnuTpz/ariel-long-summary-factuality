@@ -459,6 +459,7 @@ def verify_nli_jsonl(
             verifier="nli",
             retrieval_method=retrieval_method,
             top_k=top_k,
+            allow_missing_retrieval=True,
         )
         for key, value in input_stats.to_dict().items():
             print(f"{key}: {value}")
@@ -486,8 +487,8 @@ def verify_nli_jsonl(
 
 def parse_label_order(value: str) -> tuple[str, ...]:
     labels = tuple(normalize_label(part) for part in value.split(",") if part.strip())
-    if len(labels) != 3:
-        raise argparse.ArgumentTypeError("label order must contain exactly three labels")
+    if len(labels) != 3 or len(set(labels)) != 3:
+        raise argparse.ArgumentTypeError("label order must contain three distinct labels")
     unknown = [label for label in labels if label not in NLI_TO_PROJECT_LABEL]
     if unknown:
         raise argparse.ArgumentTypeError(f"unknown NLI labels: {', '.join(unknown)}")

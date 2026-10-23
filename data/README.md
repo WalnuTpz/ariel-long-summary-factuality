@@ -50,7 +50,7 @@ annotations.
 
 ```json
 {
-  "query_id": "govreport_00001_s001",
+  "query_id": "govreport_00001::govreport_00001_qwen::s001",
   "doc_id": "govreport_00001",
   "summary_id": "govreport_00001_qwen",
   "sentence_id": 1,
@@ -59,8 +59,16 @@ annotations.
 }
 ```
 
-The retrieval modules can use `query_id` as the query identifier and `text` as
-the retrieval query.
+The retrieval modules use `query_id` as the query identifier and `text` as the
+retrieval query. IDs include both `doc_id` and `summary_id`:
+`<doc_id>::<summary_id>::s<sentence_id>`. The sentence number is its position in
+the original summary, so filtered short sentences can leave gaps. Corrected
+records retain those positions through `original_summary` and `sentence_edits`;
+a short replacement is still verified under its original query ID.
+
+Regenerate sentence, retrieval, verification, and evaluation files together when
+switching from the older document-only query IDs. Existing generated summaries
+can be reused.
 
 ## Chunk JSONL
 
@@ -85,7 +93,7 @@ The query is a generated summary sentence.
 
 ```json
 {
-  "query_id": "govreport_00001_s001",
+  "query_id": "govreport_00001::govreport_00001_qwen::s001",
   "doc_id": "govreport_00001",
   "query": "The report found that program costs increased in 2021.",
   "retrieval_method": "bm25|embedding|hybrid|ariel",
@@ -116,7 +124,7 @@ For ARIEL outputs, each top-k item may additionally include coverage features:
 
 ```json
 {
-  "query_id": "govreport_00001_s001",
+  "query_id": "govreport_00001::govreport_00001_qwen::s001",
   "doc_id": "govreport_00001",
   "summary_id": "govreport_00001_qwen",
   "sentence_id": 1,
@@ -139,7 +147,9 @@ factual-risk sentences in before/after correction analysis.
 ## Correction JSONL
 
 Correction rewrites only Unsupported sentences and high-confidence Not Enough
-Information sentences. It should not rewrite the whole summary freely.
+Information sentences. It should not rewrite the whole summary freely. A rewrite
+must contain one sentence; invalid output keeps the original sentence. Unselected text, including short
+sentences excluded from verification, remains in the corrected summary.
 
 ```json
 {
